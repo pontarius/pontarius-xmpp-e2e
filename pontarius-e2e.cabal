@@ -22,6 +22,7 @@ library
   build-depends:       base
                      , aeson
                      , bytestring
+                     , byteable
                      , base64-bytestring
                      , crypto-numbers
 --                     , cryptocipher
@@ -40,3 +41,4 @@ library
                      , asn1-data
                      , pem
                      , certificate
+                     , text

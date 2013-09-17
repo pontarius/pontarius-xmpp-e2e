@@ -16,9 +16,10 @@ import           Control.Monad.Reader
 import           Control.Monad.State.Strict
 import           Control.Monad.Trans.State.Strict (liftCatch)
 import qualified Crypto.PubKey.DSA as DSA
+import qualified Crypto.Random.API as CRandom
 import qualified Crypto.Random.API as CRandomE2
 import qualified Data.ByteString as BS
-import Pontarius.E2E.Types
+import           Pontarius.E2E.Types
 
 newtype RandT g m a = RandT { unRandT :: StateT g m a }
                       deriving (Monad, Functor, MonadTrans)

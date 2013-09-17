@@ -12,38 +12,41 @@ import qualified Crypto.Random.API as CRandom
 import           Data.Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
+import           Data.Byteable (constEqBytes)
 import           Pontarius.E2E.Monad
 import           Pontarius.E2E.Serialize
 import           Pontarius.E2E.Types
+
+(=~=) :: BS.ByteString -> BS.ByteString -> Bool
+(=~=) = constEqBytes
 
 encCtrZero key pl = do
     E2EParameters{..} <- asks parameters
     let zeroIV = BS.replicate encryptionBlockSize 0
     return $ encryptionCtr zeroIV  key pl
 
+decCtrZero = encCtrZero
+
+
 hash pl = do
     E2EParameters {..} <- asks parameters
     return $ paramHash pl
 
 mac key pl = do
-    E2EParameters {..} <- asks parameters
-    return $ paramMac key pl
+    mac <- asks $ paramMac . parameters
+    return $ mac key pl
 
 mkKey = do
     E2EParameters {..} <- asks parameters
     getBytes encryptionBlockSize
 
 putAuthState as = modify $ \s -> s{authState = as }
+putMsgState ms = modify $ \s -> s{msgState = ms }
 
 makeDHSharedSecret :: Integer -> Integer -> E2E g Integer
 makeDHSharedSecret private public = do
     prime <- asks $ dhPrime . parameters
     return $ Mod.exponantiation_rtl_binary public private prime
-
-data DHCommitMessage = DHC{ gxMpiAes    :: !DATA
-                          , gxMpiSha256 :: !DATA
-                          } deriving (Show, Eq)
-
 
 parameter = asks . (. parameters)
 
@@ -90,15 +93,42 @@ alice1 otrcm = do
     gy <- gets $ pub . ourCurrentKey
     return $ DHK gy
 
--- bob2 (DHK gyMpi) = do
---     aState <- gets authState
---     r <- case aState of
---         AuthStateAwaitingDHKey r -> return r
---         _ -> throwError WrongState
---     checkAndSaveDHKey gyMpi
---     sm <- mkAuthMessage KeysRSM
---     OtrT . putAuthState $ AuthStateAwaitingSig
---     return $! RSM (DATA r) sm
+
+bob2 (DHK gyMpi) = do
+    aState <- gets authState
+    r <- case aState of
+        AuthStateAwaitingDHKey r -> return r
+        _ -> throwError WrongState
+    checkAndSaveDHKey gyMpi
+    sm <- mkAuthMessage KeysRSM
+    putAuthState AuthStateAwaitingSig
+    return $! RSM r sm
+
+alice2 (RSM r sm) = do
+    aState <- gets authState
+    DHC{..} <- case aState of
+        AuthStateAwaitingRevealsig dhc -> return dhc
+        _ -> throwError WrongState
+    gxBS <- encCtrZero r gxEnc -- decrypt
+    h <- parameter paramHash
+    protocolGuard HashMismatch (h gxBS =~= gxHash)
+    let gx = rollInteger . BS.unpack $ gxBS
+    checkAndSaveDHKey gx
+    checkAndSaveAuthMessage KeysRSM sm
+    am <- mkAuthMessage KeysSM
+    putAuthState AuthStateNone
+    putMsgState MsgStateEncrypted
+    return am
+
+bob3 (SM xaEncrypted xaSha256Mac) = do
+    aState <- gets authState
+    case aState of
+        AuthStateAwaitingSig -> return ()
+        _ -> throwError WrongState
+    checkAndSaveAuthMessage KeysSM (SM xaEncrypted xaSha256Mac)
+    putAuthState AuthStateNone
+    putMsgState MsgStateEncrypted
+    return ()
 
 protocolGuard e p = unless p . throwError $ ProtocolError e
 
@@ -119,8 +149,33 @@ mkAuthMessage keyType = do
     keyID <- gets ourKeyID
     mb <- m gx gy ourPub keyID macKey1
     sig <- sign mb
-    (xbEncrypted, xbSha256Mac) <- xs ourPub keyID sig aesKey macKey2
-    return $ SM xbEncrypted xbSha256Mac
+    (xbEncrypted, xbEncMac) <- xs ourPub keyID sig aesKey macKey2
+    return $ SM xbEncrypted xbEncMac
+
+checkAndSaveAuthMessage keyType (SM xEncrypted xEncMac) = do
+    DHKeyPair gx x <- gets ourCurrentKey
+    Just gy <- gets theirCurrentKey
+    s <- makeDHSharedSecret x gy
+    KD{..} <- keyDerivs s
+    let (macKey1, macKey2, cryptKey)  = case keyType of
+            KeysRSM -> (kdM1 , kdM2 , kdC )
+            KeysSM  -> (kdM1', kdM2', kdC')
+    xEncMac' <- mac macKey2 xEncrypted
+    protocolGuard MACFailure (xEncMac' =~= xEncMac)
+    xDec <- decCtrZero cryptKey xEncrypted
+    Just (SD theirPub theirKeyID sig) <- return $ decodeStrict' xDec
+    theirM <- m gy gx theirPub theirKeyID macKey1
+    -- check that the public key they present is the one we have stored (if any)
+    storedPubkey <- gets theirPublicKey
+    case storedPubkey of
+        Nothing -> return ()
+        Just sp -> protocolGuard PubkeyMismatch (sp == theirPub)
+    protocolGuard SignatureMismatch $ DSA.verify id theirPub sig theirM
+    modify $ \s' -> s'{ theirKeyID = theirKeyID
+                      , theirPublicKey = Just theirPub
+                      , ssid = Just kdSsid
+                      }
+
 
 m ours theirs pubKey keyID messageAuthKey = do
     let m' = BS.concat [ intToB64BS ours

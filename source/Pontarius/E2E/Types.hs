@@ -89,7 +89,7 @@ data E2EState = E2EState { authState        :: !AuthState
                                                        -- been received yet
                          , ourIT            :: !Integer
                          , counter          :: !Integer
-                         , ssid             :: Maybe Integer
+                         , ssid             :: Maybe BS.ByteString
                            -- SMP ------------------------------
                          , verified         :: Bool
                          , smpState         :: Maybe (SmpMessaging (Either E2EError Bool))
@@ -129,8 +129,8 @@ data MessageKeys = MK { sendAES
                       , recvMAC :: !BS.ByteString
                       } deriving Show
 
-data DHCommitMessage = DHC{ gxMpiAes    :: !DATA
-                          , gxMpiSha256 :: !DATA
+data DHCommitMessage = DHC{ gxEnc  :: !DATA
+                          , gxHash :: !DATA
                           } deriving (Show, Eq)
 
 data DHKeyMessage = DHK {gyMpi :: !Integer } deriving (Show, Eq)
@@ -140,8 +140,8 @@ data RevealSignatureMessage = RSM { revealedKey :: !DATA
                                   } deriving (Eq, Show)
 
 data SignatureMessage = SM { encryptedSignature :: !DATA
-                              , macdSignature :: !MAC
-                              } deriving (Eq, Show)
+                           , macdSignature :: !MAC
+                           } deriving (Eq, Show)
 
 
 
