@@ -12,7 +12,10 @@ import qualified Crypto.Random.API as CRandom
 import           Data.Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
+import qualified Data.ByteString.Lazy.Builder as BSB
 import           Data.Byteable (constEqBytes)
+import           Data.Foldable (foldMap)
+import           Data.Monoid (mappend)
 import           Pontarius.E2E.Monad
 import           Pontarius.E2E.Serialize
 import           Pontarius.E2E.Types
@@ -147,7 +150,7 @@ mkAuthMessage keyType = do
             KeysSM  -> (kdM1', kdM2', kdC')
     (ourPub, _) <- asks dsaKeyPair
     keyID <- gets ourKeyID
-    mb <- m gx gy ourPub keyID macKey1
+    mb <- m gx gy ourPub macKey1
     sig <- sign mb
     (xbEncrypted, xbEncMac) <- xs ourPub keyID sig aesKey macKey2
     return $ SM xbEncrypted xbEncMac
@@ -164,7 +167,7 @@ checkAndSaveAuthMessage keyType (SM xEncrypted xEncMac) = do
     protocolGuard MACFailure (xEncMac' =~= xEncMac)
     xDec <- decCtrZero cryptKey xEncrypted
     Just (SD theirPub theirKeyID sig) <- return $ decodeStrict' xDec
-    theirM <- m gy gx theirPub theirKeyID macKey1
+    theirM <- m gy gx theirPub macKey1
     -- check that the public key they present is the one we have stored (if any)
     storedPubkey <- gets theirPublicKey
     case storedPubkey of
@@ -177,13 +180,18 @@ checkAndSaveAuthMessage keyType (SM xEncrypted xEncMac) = do
                       }
 
 
-m ours theirs pubKey keyID messageAuthKey = do
-    let m' = BS.concat [ intToB64BS ours
-                       , BS.pack [0]
-                       , intToB64BS theirs
-                       ]
+m ours theirs pubKey messageAuthKey = do
+    let m' = BS.concat . BSL.toChunks . BSB.toLazyByteString $
+             foldMap toMPI [ ours , theirs]
+             `mappend` encodePubkey pubKey
     mac <- parameter paramMac
     return $ mac messageAuthKey m'
+  where
+    toMPI i = let bs = unrollInteger i in BSB.word32BE (fromIntegral $ length bs)
+                                         `mappend` (BSB.word8 `foldMap` bs)
+    encodePubkey (DSA.PublicKey (DSA.Params p g q) y) =
+        foldMap toMPI [p, q, g, y]
+
 
 xs pub kid sig aesKey macKey = do
     let sd = SD{ sdPub   = pub
