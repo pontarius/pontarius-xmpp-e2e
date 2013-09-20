@@ -6,9 +6,9 @@ where
 import qualified Control.Monad.CryptoRandom as CR
 import           Control.Monad.Error
 import qualified Crypto.PubKey.DSA as DSA
-import qualified Crypto.Random.API as CRandom
 import qualified Data.ByteString as BS
 import           Data.Typeable (Typeable)
+
 
 type CTR = BS.ByteString
 type MAC = BS.ByteString
@@ -83,11 +83,6 @@ data E2EState = E2EState { authState        :: !AuthState
                          , theirCurrentKey  :: !(Maybe Integer)
                          , theirPreviousKey :: !(Maybe Integer)
                            -- Instance Tags
-                         , theirIT          :: !Integer -- 0 is considered a
-                                                       -- special value meaning
-                                                       -- no instance Tag has
-                                                       -- been received yet
-                         , ourIT            :: !Integer
                          , counter          :: !Integer
                          , ssid             :: Maybe BS.ByteString
                            -- SMP ------------------------------
@@ -129,8 +124,8 @@ data MessageKeys = MK { sendAES
                       , recvMAC :: !BS.ByteString
                       } deriving Show
 
-data DHCommitMessage = DHC{ gxEnc  :: !DATA
-                          , gxHash :: !DATA
+data DHCommitMessage = DHC{ gxBSEnc  :: !DATA
+                          , gxBSHash :: !DATA
                           } deriving (Show, Eq)
 
 data DHKeyMessage = DHK {gyMpi :: !Integer } deriving (Show, Eq)
@@ -143,11 +138,27 @@ data SignatureMessage = SM { encryptedSignature :: !DATA
                            , macdSignature :: !MAC
                            } deriving (Eq, Show)
 
+data DataMessage = DM { senderKeyID :: Integer
+                      , recipientKeyID :: Integer
+                      , nextDHy :: Integer
+                      , ctrHi :: CTR
+                      , messageEnc :: DATA
+                      , messageMAC :: DATA
+                      }
 
+                   deriving (Show, Eq)
+
+data E2EAkeMessage = DHCommitMessage {unDHCommitMessage :: !DHCommitMessage}
+                   | DHKeyMessage{unDHKeyMessage :: !DHKeyMessage}
+                   | RevealSignatureMessage{ unRevealSignatureMessage::
+                                                   !RevealSignatureMessage}
+                   | SignatureMessage{unSignatureMessage :: !SignatureMessage}
+                   deriving (Eq, Show)
 
 
 data E2EParameters = E2EParameters { dhPrime :: Integer
                                    , dhGenerator :: Integer
+                                   , dhKeySizeBits :: Integer
                                    , encryptionCtr :: BS.ByteString -- ^ IV
                                                    -> BS.ByteString -- ^ key
                                                    -> BS.ByteString -- ^ payload

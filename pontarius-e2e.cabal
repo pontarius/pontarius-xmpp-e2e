@@ -19,6 +19,10 @@ library
   hs-source-dirs:      source
   exposed-modules:     Pontarius.E2E
   other-modules:       Pontarius.E2E.Monad
+                     , Pontarius.E2E.Serialize
+                     , Pontarius.E2E.Helpers
+                     , Pontarius.E2E.AKE
+                     , Pontarius.E2E.Types
   build-depends:       base
                      , aeson
                      , bytestring
@@ -26,12 +30,10 @@ library
                      , base64-bytestring
                      , crypto-numbers
 --                     , cryptocipher
-                     , crypto-random-api
+                     , crypto-random
                      , crypto-pubkey
                      , cryptohash
-                     , cryptohash-cryptoapi
                      , cipher-aes
-                     , crypto-api
                      , monadcryptorandom
                      , cereal
                      , random
@@ -42,3 +44,6 @@ library
                      , pem
                      , certificate
                      , text
+                     , xml-picklers
+                     , xml-types
+  ghc-options: -Wall -fno-warn-orphans

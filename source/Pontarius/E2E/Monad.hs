@@ -1,3 +1,4 @@
+{-# LANGUAGE PackageImports #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FunctionalDependencies #-}
@@ -10,22 +11,24 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 module Pontarius.E2E.Monad where
 
-import           Control.Monad.Error
-import           Control.Monad.Identity
-import           Control.Monad.Reader
-import           Control.Monad.State.Strict
-import           Control.Monad.Trans.State.Strict (liftCatch)
-import qualified Crypto.PubKey.DSA as DSA
-import qualified Crypto.Random.API as CRandom
-import qualified Crypto.Random.API as CRandomE2
-import qualified Data.ByteString as BS
-import           Pontarius.E2E.Types
+import                           Control.Monad.Error
+import                           Control.Monad.Reader
+import                           Control.Monad.State.Strict
+import                           Control.Monad.Trans.State.Strict (liftCatch)
+import qualified "crypto-random" Crypto.Random as CRandom
+import qualified                 Data.ByteString as BS
+import                           Pontarius.E2E.Types
 
 newtype RandT g m a = RandT { unRandT :: StateT g m a }
                       deriving (Monad, Functor, MonadTrans)
 
 runRandT :: g -> RandT g m a -> m (a, g)
 runRandT g m = runStateT (unRandT m) g
+
+runRandTIO :: RandT CRandom.SystemRNG IO b -> IO b
+runRandTIO m = do
+    g <- CRandom.cprgCreate `fmap` CRandom.createEntropyPool :: IO CRandom.SystemRNG
+    fst `fmap` runRandT g m
 
 class Monad m => MonadRandom g m | m -> g where
     withRandGen :: (g -> (a, g)) -> m a
@@ -50,7 +53,7 @@ instance MonadError e m => MonadError e (RandT g m) where
     catchError m f = RandT $ liftCatch catchError (unRandT m) (unRandT . f)
 
 getBytes :: (CRandom.CPRG g, MonadRandom g m) => Int -> m BS.ByteString
-getBytes b = withRandGen $ CRandom.genRandomBytes b
+getBytes b = withRandGen $ CRandom.cprgGenerate b
 
 data Parameters = Parameters
 
