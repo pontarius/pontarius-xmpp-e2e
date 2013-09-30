@@ -19,10 +19,10 @@ import           Pontarius.E2E.Types
 (=~=) = constEqBytes
 
 prime :: MonadReader E2EGlobals m => m Integer
-prime = parameter dhPrime
+prime = parameter paramDHPrime
 
 gen :: MonadReader E2EGlobals m => m Integer
-gen = parameter dhGenerator
+gen = parameter paramDHGenerator
 
 infixr 8 ^.
 (^.) :: (Applicative f, MonadReader E2EGlobals f) =>
@@ -46,13 +46,23 @@ x /. y =  do
         Nothing -> error $ "could not invert " ++ show y
         Just y' -> x *. pure y'
 
+
+-- | Encrypt a ByteString. The IV is padded with 0s to the required length
+encCtr :: MonadReader E2EGlobals m =>
+          BS.ByteString -> BS.ByteString -> BS.ByteString -> m BS.ByteString
+encCtr key ivHi pl = do
+    ebs <- parameter paramEncryptionBlockSize
+    let iv = ivHi `BS.append` BS.replicate (ebs - BS.length ivHi) 0
+    ectr <- parameter paramEncrypt
+    return $ ectr iv key pl
+
+decCtr :: MonadReader E2EGlobals m =>
+          BS.ByteString -> BS.ByteString -> BS.ByteString -> m BS.ByteString
+decCtr = encCtr
+
 encCtrZero :: MonadReader E2EGlobals m =>
-     BS.ByteString -> BS.ByteString -> m BS.ByteString
-encCtrZero key pl = do
-    ebs <- parameter encryptionBlockSize
-    let zeroIV = BS.replicate ebs 0
-    ectr <- parameter encryptionCtr
-    return $ ectr zeroIV key pl
+              BS.ByteString -> BS.ByteString -> m BS.ByteString
+encCtrZero key pl = encCtr BS.empty key pl
 
 decCtrZero :: MonadReader E2EGlobals m =>
      BS.ByteString -> BS.ByteString -> m BS.ByteString
@@ -72,7 +82,7 @@ mac key pl = do
 
 mkKey :: (MonadReader E2EGlobals m, CRandom.CPRG g, MonadRandom g m) =>
      m BS.ByteString
-mkKey = getBytes =<< parameter encryptionBlockSize
+mkKey = getBytes =<< parameter paramEncryptionBlockSize
 
 putAuthState :: MonadState E2EState m => AuthState -> m ()
 putAuthState as = modify $ \s -> s{authState = as }
@@ -105,7 +115,7 @@ makeDHKeyPair :: (Applicative m, MonadReader E2EGlobals m, CRandom.CPRG g,
                   MonadRandom g m) =>
                  m DHKeyPair
 makeDHKeyPair =  do
-    ks <- parameter dhKeySizeBits
+    ks <- parameter paramDHKeySizeBits
     x <- randomIntegerBits (fromIntegral ks)
     gx <- gen ^. (pure x)
     return $ DHKeyPair gx x
@@ -117,5 +127,30 @@ randomIntegerBits :: (CRandom.CPRG g, MonadRandom g m)
 randomIntegerBits b = ((`shiftR` ((8 - b) `mod` 8)) . rollInteger . BS.unpack)
                          `liftM` getBytes ((b+7) `div` 8)
 
-protocolGuard :: MonadError E2EError m => ProtocolError -> Bool -> m ()
-protocolGuard e p = unless p . throwError $ ProtocolError e
+protocolGuard :: MonadError E2EError m => ProtocolError -> String -> Bool -> m ()
+protocolGuard e s p = unless p . throwError $ ProtocolError e s
+
+protocolGuard' :: MonadError E2EError m => ProtocolError -> Bool -> m ()
+protocolGuard' e p = protocolGuard e "" p
+
+newState = do
+    opk <- makeDHKeyPair
+    ock <- makeDHKeyPair
+    ndh <- makeDHKeyPair
+    -- instance Tag has to be >= 0x100
+    return E2EState{ ourPreviousKey   = opk
+                   , ourCurrentKey    = ock
+                   , ourKeyID         = 1
+                   , theirPublicKey   = Nothing
+                   , theirCurrentKey  = Nothing
+                   , mostRecentKey    = 2
+                   , nextDH           = ndh
+                   , theirPreviousKey = Nothing
+                   , theirKeyID       = 0
+                   , authState        = AuthStateNone
+                   , msgState         = MsgStatePlaintext
+                   , counter          = 1
+                   , ssid             = Nothing
+                   , verified         = False
+                   , smpState         = Nothing
+                   }

@@ -68,7 +68,7 @@ bob2 (RSM r sm) = do
         _ -> throwError WrongState
     gxBS <- decCtrZero r gxBSEnc
     gxBSHash' <- hash gxBS
-    protocolGuard HashMismatch (gxBSHash' =~= gxBSHash)
+    protocolGuard HashMismatch "bob2 hash" (gxBSHash' =~= gxBSHash)
     let gx = rollInteger . BS.unpack $ gxBS
     checkAndSaveDHKey gx
     checkAndSaveAuthMessage KeysRSM sm
@@ -96,13 +96,13 @@ checkAndSaveDHKey :: (MonadState E2EState m, MonadReader E2EGlobals m,
                      Integer -> m ()
 checkAndSaveDHKey key = do
     p <- prime
-    protocolGuard ValueRange (2 <= key && key <= p - 2)
+    protocolGuard ValueRange "DH" (2 <= key && key <= p - 2)
     modify (\s -> s{theirCurrentKey = Just key})
 
 keyDerivs :: Integer -> E2E g KeyDerivatives
 keyDerivs s = do
     h <-  parameter paramHash
-    let secBytes = BS.pack . unrollInteger $ s
+    let secBytes = encodeInteger $ s
         h2 b = h $ BS.singleton b `BS.append` secBytes
         kdSsid = BS.take 8 $ h2 0x00
         kdC   = h2 0x00
@@ -139,7 +139,7 @@ checkAndSaveAuthMessage keyType (SM xEncrypted xEncMac) = do
             KeysRSM -> (kdM1 , kdM2 , kdC )
             KeysSM  -> (kdM1', kdM2', kdC')
     xEncMac' <- mac macKey2 xEncrypted
-    protocolGuard MACFailure (xEncMac' =~= xEncMac)
+    protocolGuard MACFailure "auth message" $ (xEncMac' =~= xEncMac)
     xDec <- decCtrZero cryptKey xEncrypted
     Just (SD theirPub theirKeyID sig) <- return $ decodeStrict' xDec
     theirM <- m gy gx theirPub macKey1
@@ -147,8 +147,8 @@ checkAndSaveAuthMessage keyType (SM xEncrypted xEncMac) = do
     storedPubkey <- gets theirPublicKey
     case storedPubkey of
         Nothing -> return ()
-        Just sp -> protocolGuard PubkeyMismatch (sp == theirPub)
-    protocolGuard SignatureMismatch $ DSA.verify id theirPub sig theirM
+        Just sp -> protocolGuard PubkeyMismatch "" $ sp == theirPub
+    protocolGuard SignatureMismatch "" $ DSA.verify id theirPub sig theirM
     modify $ \s' -> s'{ theirKeyID = theirKeyID
                       , theirPublicKey = Just theirPub
                       , ssid = Just kdSsid

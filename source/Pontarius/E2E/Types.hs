@@ -44,7 +44,7 @@ data E2EError = WrongState
               | RandomGenError CR.GenError
               | InstanceTagRange
               | NoPeerDHKey -- theirCurrentKey is Nothing
-              | ProtocolError ProtocolError -- One of the checks failed
+              | ProtocolError ProtocolError String -- One of the checks failed
                 deriving (Show, Eq, Typeable)
 
 instance Error E2EError where
@@ -118,10 +118,10 @@ data KeyDerivatives = KD { kdSsid
                          }
                        deriving (Eq, Show)
 
-data MessageKeys = MK { sendAES
-                      , sendMAC
-                      , recvAES
-                      , recvMAC :: !BS.ByteString
+data MessageKeys = MK { sendEncKey
+                      , sendMacKey
+                      , recvEncKey
+                      , recvMacKey :: !BS.ByteString
                       } deriving Show
 
 data DHCommitMessage = DHC{ gxBSEnc  :: !DATA
@@ -156,20 +156,22 @@ data E2EAkeMessage = DHCommitMessage {unDHCommitMessage :: !DHCommitMessage}
                    deriving (Eq, Show)
 
 
-data E2EParameters = E2EParameters { dhPrime :: Integer
-                                   , dhGenerator :: Integer
-                                   , dhKeySizeBits :: Integer
-                                   , encryptionCtr :: BS.ByteString -- ^ IV
-                                                   -> BS.ByteString -- ^ key
-                                                   -> BS.ByteString -- ^ payload
-                                                   -> BS.ByteString
-                                                      -- ^ ciphertext
-                                   , encryptionBlockSize :: Int
+data E2EParameters = E2EParameters { paramDHPrime :: Integer
+                                   , paramDHGenerator :: Integer
+                                   , paramDHKeySizeBits :: Integer
+                                   , paramEncrypt :: BS.ByteString -- ^ IV
+                                             -> BS.ByteString -- ^ key
+                                             -> BS.ByteString -- ^ payload
+                                             -> BS.ByteString -- ^ ciphertext
+                                   , paramEncryptionBlockSize :: Int
                                    , paramHash :: BS.ByteString -> BS.ByteString
                                    , paramMac  :: BS.ByteString -- ^ macKey
                                                -> BS.ByteString -- ^ Payload
                                                -> BS.ByteString
---                                   , sign :: ???
+                                   , paramCheckMac :: BS.ByteString -- ^ macKey
+                                                   -> BS.ByteString -- ^ payload
+                                                   -> BS.ByteString -- ^ MAC
+                                                   -> Bool
                                    }
 
 type DSAKeyPair = (DSA.PublicKey, DSA.PrivateKey)
@@ -185,3 +187,22 @@ data SignatureData = SD { sdPub   :: DSA.PublicKey
 
 data AuthKeys = KeysRSM -- RevealSignatureMessage
               | KeysSM  -- SignatureMessage
+
+
+data E2EMessage = E2EAkeMessage E2EAkeMessage
+                | E2EDataMessage DataMessage
+
+data Messaging a = SendMessage E2EMessage (Messaging a)
+                 | RecvMessage (E2EMessage -> Messaging a)
+                 | Yield BS.ByteString (Messaging a)
+                 | AskSmpSecret (Maybe BS.ByteString)
+                                (BS.ByteString -> Messaging a)
+                 | StateChange MsgState (Messaging a)
+                 | SmpAuthenticated Bool (Messaging a)
+                 | Log String (Messaging a)
+                 | Return a
+                 deriving Functor
+
+type DSAKeys = (DSA.PublicKey, DSA.PrivateKey)
+
+type RunState g = Messaging ((Either E2EError (), E2EState), g)

@@ -63,16 +63,15 @@ type E2E g a = ErrorT E2EError (ReaderT E2EGlobals
                                         Messaging )))
                                       a
 
-data E2EMessage = E2EMessage
-
-data Messaging a = SendMessage E2EMessage (Messaging a)
-                 | RecvMessage (E2EMessage -> Messaging a)
-                 | Yield BS.ByteString (Messaging a)
-                 | AskSmpSecret (Maybe BS.ByteString)
-                                (BS.ByteString -> Messaging a)
-                 | Log String (Messaging a)
-                 | Return a
-                 deriving Functor
+runE2E :: E2EGlobals
+         -> E2EState
+         -> g
+         -> E2E g a
+         -> Messaging (((Either E2EError a), E2EState), g)
+runE2E globals s0 g = runRandT g
+                      . flip runStateT s0
+                      . flip runReaderT globals
+                      . runErrorT
 
 
 instance Monad Messaging  where
@@ -82,3 +81,5 @@ instance Monad Messaging  where
     Yield pl f >>= g = Yield pl (f >>= g)
     RecvMessage g >>= f = RecvMessage (\msg -> g msg >>= f)
     AskSmpSecret q g >>= f = AskSmpSecret q (g  >=> f)
+    SmpAuthenticated a g >>= f = SmpAuthenticated a (g >>= f)
+    StateChange s g >>= f = StateChange s (g >>= f)

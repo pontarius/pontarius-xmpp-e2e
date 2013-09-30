@@ -47,7 +47,7 @@ intToB64 = Text.decodeUtf8 . intToB64BS
 b64ToInt :: Text -> Parser Integer
 b64ToInt b64 = do
     Right bs <- return . B64.decode . Text.encodeUtf8 $ b64
-    return . decodeInteger.unpack $ bs
+    return . decodeInteger $ bs
 
 pubKeyFromJson :: Value -> Parser DSA.PublicKey
 pubKeyFromJson = withObject "DSA Public Key" dsaPBFJ
