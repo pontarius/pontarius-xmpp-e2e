@@ -23,6 +23,7 @@ library
                      , Pontarius.E2E.Helpers
                      , Pontarius.E2E.AKE
                      , Pontarius.E2E.Types
+                     , Pontarius.E2E.Message
   build-depends:       base
                      , aeson
                      , bytestring
