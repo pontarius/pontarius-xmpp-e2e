@@ -2,10 +2,12 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE FlexibleContexts #-}
 module Pontarius.E2E.AKE where
+import           Control.Applicative ((<$>))
 import           Control.Monad.Error
 import           Control.Monad.Reader
 import           Control.Monad.State
 import qualified Crypto.PubKey.DSA as DSA
+import qualified Crypto.Random as CRandom
 import           Data.Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
@@ -13,10 +15,9 @@ import qualified Data.ByteString.Lazy.Builder as BSB
 import           Data.Foldable (foldMap)
 import           Data.Monoid (mappend)
 import           Pontarius.E2E.Helpers
-import           Pontarius.E2E.Types
-import           Pontarius.E2E.Serialize
 import           Pontarius.E2E.Monad
-import qualified Crypto.Random as CRandom
+import           Pontarius.E2E.Serialize
+import           Pontarius.E2E.Types
 
 -------------------------------------
 -- The high level protocol ----------
@@ -87,6 +88,24 @@ alice3 (SM xaEncrypted xaSha256Mac) = do
     putAuthState AuthStateNone
     putMsgState MsgStateEncrypted
     return ()
+
+--------------------------------
+
+-- TODO: check for message types
+bob :: CRandom.CPRG g => E2E g ()
+bob = do
+    E2EAkeMessage (DHCommitMessage msg1) <- recvMessage
+    sendMessage =<< E2EAkeMessage . DHKeyMessage <$> bob1 msg1
+    E2EAkeMessage (RevealSignatureMessage msg2) <- recvMessage
+    sendMessage =<< E2EAkeMessage . SignatureMessage <$> bob2 msg2
+
+alice :: CRandom.CPRG g => E2E g ()
+alice = do
+    sendMessage =<< E2EAkeMessage . DHCommitMessage <$> alice1
+    E2EAkeMessage (DHKeyMessage msg1) <- recvMessage
+    sendMessage =<< E2EAkeMessage . RevealSignatureMessage <$> alice2 msg1
+    E2EAkeMessage (SignatureMessage msg2) <- recvMessage
+    alice3 msg2
 
 ---------------------
 -- helpers ----------
@@ -163,14 +182,12 @@ m :: MonadReader E2EGlobals m
      -> m BS.ByteString
 m ours theirs pubKey messageAuthKey = do
     let m' = BS.concat . BSL.toChunks . BSB.toLazyByteString $
-             foldMap toMPI [ ours , theirs]
+             foldMap toMPIBuilder [ ours , theirs]
              `mappend` encodePubkey pubKey
     mac messageAuthKey m'
   where
-    toMPI i = let bs = unrollInteger i in BSB.word32BE (fromIntegral $ length bs)
-                                         `mappend` (BSB.word8 `foldMap` bs)
     encodePubkey (DSA.PublicKey (DSA.Params p g q) y) =
-        foldMap toMPI [p, q, g, y]
+        foldMap toMPIBuilder [p, q, g, y]
 
 
 xs :: DSA.PublicKey

@@ -30,9 +30,6 @@ import           Pontarius.E2E.Types
 import           Pontarius.E2E.Helpers
 import           Pontarius.E2E.Serialize
 
-encodeMessageBytes :: DataMessage -> BS.ByteString
-encodeMessageBytes DM{} = BS.empty -- TODO
-
 decryptDataMessage :: CRandom.CPRG g => DataMessage -> E2E g BS.ByteString
 decryptDataMessage msg = do
     s <- get

@@ -11,6 +11,8 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 module Pontarius.E2E.Monad where
 
+import                           Control.Applicative
+import                           Control.Monad
 import                           Control.Monad.Error
 import                           Control.Monad.Reader
 import                           Control.Monad.State.Strict
@@ -20,7 +22,7 @@ import qualified                 Data.ByteString as BS
 import                           Pontarius.E2E.Types
 
 newtype RandT g m a = RandT { unRandT :: StateT g m a }
-                      deriving (Monad, Functor, MonadTrans)
+                      deriving (Monad, Functor, MonadTrans, Applicative)
 
 runRandT :: g -> RandT g m a -> m (a, g)
 runRandT g m = runStateT (unRandT m) g
@@ -73,7 +75,6 @@ runE2E globals s0 g = runRandT g
                       . flip runReaderT globals
                       . runErrorT
 
-
 instance Monad Messaging  where
     return = Return
     Return a >>= f = f a
@@ -83,3 +84,15 @@ instance Monad Messaging  where
     AskSmpSecret q g >>= f = AskSmpSecret q (g  >=> f)
     SmpAuthenticated a g >>= f = SmpAuthenticated a (g >>= f)
     StateChange s g >>= f = StateChange s (g >>= f)
+
+yield :: BS.ByteString -> E2E g ()
+yield s = lift . lift . lift . lift $ Yield s (return ())
+
+askSecret :: Maybe BS.ByteString -> E2E g BS.ByteString
+askSecret q = lift . lift . lift . lift $ AskSmpSecret q return
+
+recvMessage :: E2E g E2EMessage
+recvMessage = lift . lift . lift . lift $ RecvMessage return
+
+sendMessage :: E2EMessage -> E2E g ()
+sendMessage msg = lift . lift . lift . lift $ SendMessage msg (return ())

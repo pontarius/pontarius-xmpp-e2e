@@ -3,7 +3,7 @@
 module Pontarius.E2E.Serialize
 where
 
-import Control.Applicative ((<$>), (<*>))
+import           Control.Applicative ((<$>), (<*>))
 import           Control.Monad
 import qualified Crypto.PubKey.DSA as DSA
 import           Data.Aeson
@@ -11,7 +11,11 @@ import           Data.Aeson.Types (Parser)
 import           Data.Bits
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base64 as B64
+import qualified Data.ByteString.Lazy as BSL
+import qualified Data.ByteString.Lazy.Builder as BSB
+import           Data.Foldable (foldMap)
 import           Data.List
+import           Data.Monoid(mappend)
 import           Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
@@ -48,6 +52,27 @@ b64ToInt :: Text -> Parser Integer
 b64ToInt b64 = do
     Right bs <- return . B64.decode . Text.encodeUtf8 $ b64
     return . decodeInteger $ bs
+
+toMPIBuilder i = let bs = unrollInteger i in BSB.word32BE
+                                               (fromIntegral $ length bs)
+                                             `mappend` (BSB.word8 `foldMap` bs)
+
+-- | Encode data message for MAC
+encodeMessageBytes :: DataMessage -> BS.ByteString
+encodeMessageBytes msg = BS.concat . BSL.toChunks . BSB.toLazyByteString $
+                           foldMap toMPIBuilder [ senderKeyID msg
+                                                , recipientKeyID msg
+                                                , nextDHy msg
+                                                ]
+                           `mappend` BSB.word32BE (fromIntegral . BS.length
+                                                     $ ctrHi msg)
+                           `mappend` BSB.byteString (ctrHi msg)
+                           `mappend` BSB.word32BE (fromIntegral . BS.length
+                                                     $ messageEnc msg)
+                           `mappend` BSB.byteString (messageEnc msg)
+--------------------------------------
+-- JSON ------------------------------
+--------------------------------------
 
 pubKeyFromJson :: Value -> Parser DSA.PublicKey
 pubKeyFromJson = withObject "DSA Public Key" dsaPBFJ
@@ -93,6 +118,9 @@ instance ToJSON SignatureData where
                            , "signature" .= signatureToJson sdSig
                            ]
 
+---------------------------
+-- XML --------------------
+---------------------------
 
 e2eNs :: Text
 e2eNs = "yabasta-ake-1:0"

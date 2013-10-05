@@ -5,6 +5,7 @@ import           Control.Applicative (Applicative, (<$>), (<*>), pure)
 import           Control.Monad.Reader
 import           Control.Monad.State
 import           Control.Monad.Error
+import           Control.Monad.Identity
 import           Crypto.Number.ModArithmetic as Mod
 import qualified Crypto.PubKey.DSA as DSA
 import qualified Crypto.Random as CRandom
@@ -133,11 +134,11 @@ protocolGuard e s p = unless p . throwError $ ProtocolError e s
 protocolGuard' :: MonadError E2EError m => ProtocolError -> Bool -> m ()
 protocolGuard' e p = protocolGuard e "" p
 
+newState :: CRandom.CPRG g => ReaderT E2EGlobals (RandT g Identity) E2EState
 newState = do
     opk <- makeDHKeyPair
     ock <- makeDHKeyPair
     ndh <- makeDHKeyPair
-    -- instance Tag has to be >= 0x100
     return E2EState{ ourPreviousKey   = opk
                    , ourCurrentKey    = ock
                    , ourKeyID         = 1
