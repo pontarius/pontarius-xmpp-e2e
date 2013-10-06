@@ -16,8 +16,6 @@ import           Pontarius.E2E.Monad
 import           Pontarius.E2E.Serialize
 import           Pontarius.E2E.Types
 
-import           Debug.Trace
-
 (=~=) :: BS.ByteString -> BS.ByteString -> Bool
 (=~=) = constEqBytes
 
@@ -92,10 +90,12 @@ mkKey = do
     return $! bs
 
 putAuthState :: MonadState E2EState m => AuthState -> m ()
-putAuthState as = modify $ \s -> s{authState = as }
+putAuthState as = do modify $ \s -> s{authState = as }
 
-putMsgState :: MonadState E2EState m => MsgState -> m ()
-putMsgState ms = modify $ \s -> s{msgState = ms }
+putMsgState :: MsgState -> E2E g ()
+putMsgState ms = do
+    lift . lift . lift . lift $ StateChange ms (return ())
+    modify $ \s -> s{msgState = ms }
 
 makeDHSharedSecret :: Integer -> Integer -> E2E g Integer
 makeDHSharedSecret private public = do

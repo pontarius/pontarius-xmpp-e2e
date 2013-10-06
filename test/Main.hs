@@ -69,5 +69,7 @@ main = do
     let keyPair = (DSA.toPublicKey kp , DSA.toPrivateKey kp)
     let r1 = fst . fst <$> withNewState (E2EG e2eDefaultParameters keyPair) gl alice
     let r2 = fst . fst <$> withNewState (E2EG e2eDefaultParameters keyPair) gr bob
-    print $ braidMessaging r1 r2
+    case braidMessaging r1 r2  of
+        Left e -> putStrLn e
+        Right r -> print r
     return ()

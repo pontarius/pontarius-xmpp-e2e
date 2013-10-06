@@ -120,9 +120,10 @@ instance ToJSON SignatureData where
                            , "signature" .= signatureToJson sdSig
                            ]
 
-jsonDecode d = case decodeStrict' d of
-    Just x -> return x
-    Nothing -> throwError $ ProtocolError (DeserializationError $ BS8.unpack d) ""
+-- See Issue 142 in AESON: https://github.com/bos/aeson/issues/142
+jsonDecode d = case eitherDecode' (BSL.fromChunks [d]) of
+    Right x -> return x
+    Left e -> throwError $ ProtocolError (DeserializationError $ BS8.unpack d) e
 
 ---------------------------
 -- XML --------------------
