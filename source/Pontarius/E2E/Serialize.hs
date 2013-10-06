@@ -5,12 +5,14 @@ where
 
 import           Control.Applicative ((<$>), (<*>))
 import           Control.Monad
+import           Control.Monad.Error
 import qualified Crypto.PubKey.DSA as DSA
 import           Data.Aeson
 import           Data.Aeson.Types (Parser)
 import           Data.Bits
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base64 as B64
+import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Lazy.Builder as BSB
 import           Data.Foldable (foldMap)
@@ -117,6 +119,10 @@ instance ToJSON SignatureData where
                            , "keyID" .= sdKeyID
                            , "signature" .= signatureToJson sdSig
                            ]
+
+jsonDecode d = case decodeStrict' d of
+    Just x -> return x
+    Nothing -> throwError $ ProtocolError (DeserializationError $ BS8.unpack d) ""
 
 ---------------------------
 -- XML --------------------

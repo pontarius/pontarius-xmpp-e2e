@@ -19,6 +19,8 @@ import           Pontarius.E2E.Monad
 import           Pontarius.E2E.Serialize
 import           Pontarius.E2E.Types
 
+import Debug.Trace
+
 -------------------------------------
 -- The high level protocol ----------
 -------------------------------------
@@ -41,7 +43,7 @@ bob1 otrcm = do
     aState <- gets authState
     case aState of
         AuthStateNone -> return ()
-        _             -> throwError WrongState
+        _             -> throwError $ WrongState "bob1"
     putAuthState $ AuthStateAwaitingRevealsig otrcm
     gy <- gets $ pub . ourCurrentKey
     return $ DHK gy
@@ -52,7 +54,7 @@ alice2 (DHK gyMpi) = do
     aState <- gets authState
     r <- case aState of
         AuthStateAwaitingDHKey r -> return r
-        _ -> throwError WrongState
+        _ -> throwError $ WrongState "alice2"
     checkAndSaveDHKey gyMpi
     sm <- mkAuthMessage KeysRSM
     putAuthState AuthStateAwaitingSig
@@ -66,7 +68,7 @@ bob2 (RSM r sm) = do
        , gxBSHash = gxBSHash
        } <- case aState of
         AuthStateAwaitingRevealsig dhc -> return dhc
-        _ -> throwError WrongState
+        _ -> throwError $ WrongState "bob2"
     gxBS <- decCtrZero r gxBSEnc
     gxBSHash' <- hash gxBS
     protocolGuard HashMismatch "bob2 hash" (gxBSHash' =~= gxBSHash)
@@ -83,7 +85,7 @@ alice3 (SM xaEncrypted xaSha256Mac) = do
     aState <- gets authState
     case aState of
         AuthStateAwaitingSig -> return ()
-        _ -> throwError WrongState
+        _ -> throwError $ WrongState "alice3"
     checkAndSaveAuthMessage KeysSM (SM xaEncrypted xaSha256Mac)
     putAuthState AuthStateNone
     putMsgState MsgStateEncrypted
@@ -124,13 +126,21 @@ keyDerivs s = do
     let secBytes = encodeInteger $ s
         h2 b = h $ BS.singleton b `BS.append` secBytes
         kdSsid = BS.take 8 $ h2 0x00
-        kdC   = h2 0x00
-        kdC'  = h2 0x01
-        kdM1  = h2 0x03
-        kdM2  = h2 0x04
-        kdM1' = h2 0x05
-        kdM2' = h2 0x06
-    return KD{..}
+        kdC    = h2 0x00
+        kdC'   = h2 0x01
+        kdM1   = h2 0x03
+        kdM2   = h2 0x04
+        kdM1'  = h2 0x05
+        kdM2'  = h2 0x06
+    let kd = KD{ kdSsid = kdSsid
+               , kdC    = kdC
+               , kdC'   = kdC'
+               , kdM1   = kdM1
+               , kdM2   = kdM2
+               , kdM1'  = kdM1'
+               , kdM2'  = kdM2'
+               }
+    return kd
 
 mkAuthMessage :: CRandom.CPRG g => AuthKeys -> E2E g SignatureMessage
 mkAuthMessage keyType = do
@@ -160,7 +170,7 @@ checkAndSaveAuthMessage keyType (SM xEncrypted xEncMac) = do
     xEncMac' <- mac macKey2 xEncrypted
     protocolGuard MACFailure "auth message" $ (xEncMac' =~= xEncMac)
     xDec <- decCtrZero cryptKey xEncrypted
-    Just (SD theirPub theirKeyID sig) <- return $ decodeStrict' xDec
+    SD theirPub theirKeyID sig <- jsonDecode xDec
     theirM <- m gy gx theirPub macKey1
     -- check that the public key they present is the one we have stored (if any)
     storedPubkey <- gets theirPublicKey
@@ -172,7 +182,6 @@ checkAndSaveAuthMessage keyType (SM xEncrypted xEncMac) = do
                       , theirPublicKey = Just theirPub
                       , ssid = Just kdSsid
                       }
-
 
 m :: MonadReader E2EGlobals m
      => Integer

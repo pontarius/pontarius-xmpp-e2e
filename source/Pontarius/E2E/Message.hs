@@ -33,7 +33,7 @@ import           Pontarius.E2E.Serialize
 decryptDataMessage :: CRandom.CPRG g => DataMessage -> E2E g BS.ByteString
 decryptDataMessage msg = do
     s <- get
-    unless (msgState s == MsgStateEncrypted) $ throwError WrongState
+    unless (msgState s == MsgStateEncrypted) . throwError $ WrongState "decryptDataMessage"
     MK{ recvEncKey
       , recvMacKey } <- makeMessageKeys (senderKeyID msg) (recipientKeyID msg)
     check <- parameter paramCheckMac

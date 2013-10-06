@@ -16,6 +16,8 @@ import           Pontarius.E2E.Monad
 import           Pontarius.E2E.Serialize
 import           Pontarius.E2E.Types
 
+import           Debug.Trace
+
 (=~=) :: BS.ByteString -> BS.ByteString -> Bool
 (=~=) = constEqBytes
 
@@ -53,9 +55,11 @@ encCtr :: MonadReader E2EGlobals m =>
           BS.ByteString -> BS.ByteString -> BS.ByteString -> m BS.ByteString
 encCtr key ivHi pl = do
     ebs <- parameter paramEncryptionBlockSize
-    let iv = ivHi `BS.append` BS.replicate (ebs - BS.length ivHi) 0
+    eks <- parameter paramEncryptionKeySize
+    let iv = ivHi `BS.append` BS.replicate ((ebs `div` 8) - BS.length ivHi) 0
+    let k = (BS.take (eks `div` 8) key)
     ectr <- parameter paramEncrypt
-    return $ ectr iv key pl
+    return $ ectr iv k pl
 
 decCtr :: MonadReader E2EGlobals m =>
           BS.ByteString -> BS.ByteString -> BS.ByteString -> m BS.ByteString
@@ -63,7 +67,7 @@ decCtr = encCtr
 
 encCtrZero :: MonadReader E2EGlobals m =>
               BS.ByteString -> BS.ByteString -> m BS.ByteString
-encCtrZero key pl = encCtr BS.empty key pl
+encCtrZero key pl = encCtr key BS.empty pl
 
 decCtrZero :: MonadReader E2EGlobals m =>
      BS.ByteString -> BS.ByteString -> m BS.ByteString
@@ -83,7 +87,9 @@ mac key pl = do
 
 mkKey :: (MonadReader E2EGlobals m, CRandom.CPRG g, MonadRandom g m) =>
      m BS.ByteString
-mkKey = getBytes =<< parameter paramEncryptionBlockSize
+mkKey = do
+    bs <- getBytes =<< parameter paramEncryptionKeySize
+    return $! bs
 
 putAuthState :: MonadState E2EState m => AuthState -> m ()
 putAuthState as = modify $ \s -> s{authState = as }
@@ -155,3 +161,11 @@ newState = do
                    , verified         = False
                    , smpState         = Nothing
                    }
+
+withNewState :: CRandom.CPRG g => E2EGlobals
+                               -> g
+                               -> E2E g a
+                               -> Messaging ((Either E2EError a, E2EState), g)
+withNewState globals g side = do
+    let (st, g') = runIdentity $ runRandT g $ runReaderT newState globals
+    runE2E globals st g' side

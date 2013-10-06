@@ -40,7 +40,7 @@ data ProtocolError = MACFailure
                    | WrongKeyID -- KeyID is not current or current + 1
                      deriving (Show, Eq)
 
-data E2EError = WrongState
+data E2EError = WrongState String
               | RandomGenError CR.GenError
               | InstanceTagRange
               | NoPeerDHKey -- theirCurrentKey is Nothing
@@ -48,7 +48,7 @@ data E2EError = WrongState
                 deriving (Show, Eq, Typeable)
 
 instance Error E2EError where
-    noMsg = WrongState
+    strMsg = WrongState
 
 data AuthState = AuthStateNone
                | AuthStateAwaitingDHKey BS.ByteString
@@ -84,10 +84,10 @@ data E2EState = E2EState { authState        :: !AuthState
                          , theirPreviousKey :: !(Maybe Integer)
                            -- Instance Tags
                          , counter          :: !Integer
-                         , ssid             :: Maybe BS.ByteString
+                         , ssid             :: !(Maybe BS.ByteString)
                            -- SMP ------------------------------
-                         , verified         :: Bool
-                         , smpState         :: Maybe (SmpMessaging (Either E2EError Bool))
+                         , verified         :: !Bool
+                         , smpState         :: !(Maybe (SmpMessaging (Either E2EError Bool)))
                          }
 
 data MessagePayload = MP { messagePlaintext :: !BS.ByteString
@@ -138,12 +138,12 @@ data SignatureMessage = SM { encryptedSignature :: !DATA
                            , macdSignature :: !MAC
                            } deriving (Eq, Show)
 
-data DataMessage = DM { senderKeyID :: Integer
-                      , recipientKeyID :: Integer
-                      , nextDHy :: Integer
-                      , ctrHi :: CTR
-                      , messageEnc :: DATA
-                      , messageMAC :: DATA
+data DataMessage = DM { senderKeyID :: !Integer
+                      , recipientKeyID :: !Integer
+                      , nextDHy :: !Integer
+                      , ctrHi :: !CTR
+                      , messageEnc :: !DATA
+                      , messageMAC :: !DATA
                       }
 
                    deriving (Show, Eq)
@@ -156,14 +156,15 @@ data E2EAkeMessage = DHCommitMessage {unDHCommitMessage :: !DHCommitMessage}
                    deriving (Eq, Show)
 
 
-data E2EParameters = E2EParameters { paramDHPrime :: Integer
-                                   , paramDHGenerator :: Integer
-                                   , paramDHKeySizeBits :: Integer
+data E2EParameters = E2EParameters { paramDHPrime :: !Integer
+                                   , paramDHGenerator :: !Integer
+                                   , paramDHKeySizeBits :: !Integer
                                    , paramEncrypt :: BS.ByteString -- ^ IV
                                              -> BS.ByteString -- ^ key
                                              -> BS.ByteString -- ^ payload
                                              -> BS.ByteString -- ^ ciphertext
-                                   , paramEncryptionBlockSize :: Int
+                                   , paramEncryptionBlockSize :: !Int
+                                   , paramEncryptionKeySize :: !Int
                                    , paramHash :: BS.ByteString -> BS.ByteString
                                    , paramMac  :: BS.ByteString -- ^ macKey
                                                -> BS.ByteString -- ^ Payload
@@ -176,32 +177,44 @@ data E2EParameters = E2EParameters { paramDHPrime :: Integer
 
 type DSAKeyPair = (DSA.PublicKey, DSA.PrivateKey)
 
-data E2EGlobals = E2EG { parameters :: E2EParameters
-                       , dsaKeyPair :: DSAKeyPair
+data E2EGlobals = E2EG { parameters :: !E2EParameters
+                       , dsaKeyPair :: !DSAKeyPair
                        }
 
-data SignatureData = SD { sdPub   :: DSA.PublicKey
-                        , sdKeyID :: Integer
-                        , sdSig   :: DSA.Signature
+data SignatureData = SD { sdPub   :: !DSA.PublicKey
+                        , sdKeyID :: !Integer
+                        , sdSig   :: !DSA.Signature
                         } deriving (Eq, Show)
 
 data AuthKeys = KeysRSM -- RevealSignatureMessage
               | KeysSM  -- SignatureMessage
 
 
-data E2EMessage = E2EAkeMessage E2EAkeMessage
-                | E2EDataMessage DataMessage
+data E2EMessage = E2EAkeMessage !E2EAkeMessage
+                | E2EDataMessage !DataMessage
+                  deriving Show
 
-data Messaging a = SendMessage E2EMessage (Messaging a)
+data Messaging a = SendMessage !E2EMessage (Messaging a)
                  | RecvMessage (E2EMessage -> Messaging a)
-                 | Yield BS.ByteString (Messaging a)
-                 | AskSmpSecret (Maybe BS.ByteString)
+                 | Yield !BS.ByteString (Messaging a)
+                 | AskSmpSecret !(Maybe BS.ByteString)
                                 (BS.ByteString -> Messaging a)
-                 | StateChange MsgState (Messaging a)
-                 | SmpAuthenticated Bool (Messaging a)
-                 | Log String (Messaging a)
+                 | StateChange !MsgState (Messaging a)
+                 | SmpAuthenticated !Bool (Messaging a)
+                 | Log !String (Messaging a)
                  | Return a
                  deriving Functor
+
+instance Show a => Show (Messaging a) where
+    show (SendMessage msg f) = "SendMessage{" ++ show msg ++ "}> " ++ show f
+    show (RecvMessage _) = "RecvMsg(...)"
+    show (Yield y f) = "Yield{" ++ show y ++ "}> " ++ show f
+    show (AskSmpSecret q _) = "AskSmpSecret{" ++ show q ++ "}(..)"
+    show (StateChange st f) = "StateChange{" ++ show st ++ "}> " ++ show f
+    show (SmpAuthenticated b f) = "SmpAuthenticated{" ++ show b ++ "}> " ++ show f
+    show (Log l f) = "Log{" ++ show l ++ "}> " ++ show f
+    show (Return a) = "Return{" ++ show a ++ "}"
+
 
 type DSAKeys = (DSA.PublicKey, DSA.PrivateKey)
 

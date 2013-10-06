@@ -25,7 +25,6 @@ data E2ESession g = E2ESession { e2eGlobals :: E2EGlobals
                                , onSmpAuthChange :: Bool -> IO ()
                                }
 
-
 runMessaging :: RunState g
              -> Either E2EError ( Either (RunState g) (E2EState, g)
                                 , [BS.ByteString]
@@ -48,7 +47,6 @@ runMessaging = go id id Nothing Nothing
     go ys os s a as@(AskSmpSecret{}) = Right (Left as , ys [], os [], s, a)
     go ys os _s a (StateChange st f) = go ys os (Just st) a f
     go ys os s _a (SmpAuthenticated auth f) = go ys os s (Just auth) f
-
 
 newSession :: E2E CRandom.SystemRNG () -- ^ alice or bob
            -> E2EGlobals
@@ -77,7 +75,6 @@ newSession side globals sGen oss osmp sm = do
                             , onStateChange   = oss
                             , onSmpAuthChange = osmp
                             }
-
 
 handleDataMessage :: CRandom.CPRG g => DataMessage -> E2E g ()
 handleDataMessage msg = do
