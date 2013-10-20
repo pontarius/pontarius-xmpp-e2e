@@ -65,11 +65,21 @@ braidMessaging l r = Left (show l ++ " / " ++
 main = do
     gl <- CRandom.cprgCreate <$> CRandom.createEntropyPool :: IO CRandom.SystemRNG
     gr <- CRandom.cprgCreate <$> CRandom.createEntropyPool :: IO CRandom.SystemRNG
-    kp <- getKey "keyfile.pem"
-    let keyPair = (DSA.toPublicKey kp , DSA.toPrivateKey kp)
-    let r1 = fst . fst <$> withNewState (E2EG e2eDefaultParameters keyPair) gl alice
-    let r2 = fst . fst <$> withNewState (E2EG e2eDefaultParameters keyPair) gr bob
+    kp1 <- getKey "keyfile.pem"
+    kp2 <- getKey "keyfile2.pem"
+    let keyPair1 = (DSA.toPublicKey kp1 , DSA.toPrivateKey kp1)
+    let keyPair2 = (DSA.toPublicKey kp2 , DSA.toPrivateKey kp2)
+    let r1 = fst . fst <$> withNewState (E2EG e2eDefaultParameters keyPair1) gl alice
+    let r2 = fst . fst <$> withNewState (E2EG e2eDefaultParameters keyPair2) gr bob
     case braidMessaging r1 r2  of
-        Left e -> putStrLn e
-        Right r -> print r
-    return ()
+        Left e -> putStrLn "Test failed, got error: "
+                  >> putStrLn e >> return False
+        Right r -> if r == ( ([],[])
+                           , (Just MsgStateEncrypted,Just MsgStateEncrypted)
+                           , (Nothing,Nothing)
+                           , ([],[])
+                           , (Right (),Right ())
+                           )
+                   then putStrLn "Test passed" >> return True
+                   else putStrLn "Test failed, got unexpected result: "
+                        >> print r >> return False

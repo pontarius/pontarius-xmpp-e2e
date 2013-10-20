@@ -24,6 +24,7 @@ library
                      , Pontarius.E2E.AKE
                      , Pontarius.E2E.Types
                      , Pontarius.E2E.Message
+                     , Pontarius.E2E.Session
   build-depends:       base
                      , aeson
                      , bytestring
@@ -42,6 +43,7 @@ library
                      , transformers
                      , xml-picklers
                      , xml-types
+                     , pontarius-xmpp
 -- helpers
                      , pem
                      , certificate
@@ -49,5 +51,9 @@ library
                      , crypto-pubkey-types
                      , asn1-types
                      , asn1-encoding >= 0.8.1.1
+                     , data-default
+                     , network
+                     , stm
+                     , hslogger
 
   ghc-options: -Wall -fno-warn-orphans
