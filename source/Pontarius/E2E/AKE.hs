@@ -19,8 +19,6 @@ import           Pontarius.E2E.Monad
 import           Pontarius.E2E.Serialize
 import           Pontarius.E2E.Types
 
-import Debug.Trace
-
 -------------------------------------
 -- The high level protocol ----------
 -------------------------------------
@@ -36,7 +34,6 @@ alice1 = do
     return DHC{ gxBSEnc = gxBSEnc
               , gxBSHash = gxBSHash
               }
-
 
 bob1 :: DHCommitMessage -> E2E g DHKeyMessage
 bob1 otrcm = do
