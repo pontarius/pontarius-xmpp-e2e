@@ -190,8 +190,9 @@ data AuthKeys = KeysRSM -- RevealSignatureMessage
               | KeysSM  -- SignatureMessage
 
 
-data E2EMessage = E2EAkeMessage !E2EAkeMessage
-                | E2EDataMessage !DataMessage
+data E2EMessage = E2EAkeMessage {unE2EAkeMessage ::  !E2EAkeMessage}
+                | E2EDataMessage {unE2EDataMessage:: !DataMessage}
+                | E2EEndSessionMessage
                   deriving Show
 
 data Messaging a = SendMessage !E2EMessage (Messaging a)

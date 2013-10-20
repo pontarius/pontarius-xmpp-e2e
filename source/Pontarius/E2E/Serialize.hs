@@ -177,24 +177,29 @@ signatureMessageXml = xpWrap (uncurry SM) (\(SM es ms) -> (es, ms)) .
                                     (b64Elem "encsigmac")
 
 
-messageSelector :: Num a => E2EAkeMessage -> a
-messageSelector DHCommitMessage{}        = 0
-messageSelector DHKeyMessage{}           = 1
-messageSelector RevealSignatureMessage{} = 2
-messageSelector SignatureMessage{}       = 3
+akeMessageSelector :: Num a => E2EAkeMessage -> a
+akeMessageSelector DHCommitMessage{}        = 0
+akeMessageSelector DHKeyMessage{}           = 1
+akeMessageSelector RevealSignatureMessage{} = 2
+akeMessageSelector SignatureMessage{}       = 3
 
 akeMessageXml :: PU [Node] E2EAkeMessage
-akeMessageXml = xpAlt messageSelector [ xpWrap DHCommitMessage unDHCommitMessage
-                                                   dhCommitMessageXml
-                                      , xpWrap DHKeyMessage unDHKeyMessage
-                                                   dhKeyMessageXml
-                                      , xpWrap RevealSignatureMessage
-                                               unRevealSignatureMessage
-                                                   revealSignatureMessageXml
-                                      , xpWrap SignatureMessage
-                                               unSignatureMessage
-                                                   signatureMessageXml
-                                      ]
+akeMessageXml = xpAlt akeMessageSelector
+                      [ xpWrap DHCommitMessage unDHCommitMessage
+                               dhCommitMessageXml
+                      , xpWrap DHKeyMessage unDHKeyMessage
+                               dhKeyMessageXml
+                      , xpWrap RevealSignatureMessage
+                               unRevealSignatureMessage
+                               revealSignatureMessageXml
+                      , xpWrap SignatureMessage
+                               unSignatureMessage
+                               signatureMessageXml
+                      ]
+
+
+endSessionMessageXml :: PU [Node] ()
+endSessionMessageXml = xpElemBlank (e2eName "end-session")
 
 dataMessageXml :: PU [Node] DataMessage
 dataMessageXml = xpWrap (\(skid, rkid, ndh, ctr, menc, mmac) ->
@@ -208,3 +213,14 @@ dataMessageXml = xpWrap (\(skid, rkid, ndh, ctr, menc, mmac) ->
                              (b64Elem "counter"          )
                              (b64Elem "data"             )
                              (b64Elem "mac"              )
+
+e2eMessageSelector :: Num a => E2EMessage -> a
+e2eMessageSelector E2EAkeMessage{} = 0
+e2eMessageSelector E2EDataMessage{} = 1
+e2eMessageSelector E2EEndSessionMessage{} = 2
+
+e2eMessageXml = xpAlt e2eMessageSelector
+                [ xpWrap E2EAkeMessage unE2EAkeMessage akeMessageXml
+                , xpWrap E2EDataMessage unE2EDataMessage dataMessageXml
+                , xpConst E2EEndSessionMessage endSessionMessageXml
+                ]
