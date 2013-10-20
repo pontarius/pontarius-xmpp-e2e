@@ -1,29 +1,12 @@
 {-# LANGUAGE NamedFieldPuns #-}
 module Pontarius.E2E.Message where
 
-import           Control.Applicative ((<$>), (<*>), pure)
-import           Control.Concurrent.MVar
-import qualified Control.Exception as Ex
 import           Control.Monad
 import           Control.Monad.Error
-import           Control.Monad.Reader
 import           Control.Monad.State.Strict
-import qualified Crypto.Cipher.AES as AES
-import qualified Crypto.Hash.SHA1 as SHA1 (hash)
-import qualified Crypto.Hash.SHA256 as SHA256 (hash)
-import qualified Crypto.MAC.HMAC as HMAC
-import           Crypto.Number.ModArithmetic as Mod
-import qualified Crypto.PubKey.DSA as DSA
 import qualified Crypto.Random as CRandom
-import           Data.Bits hiding (shift)
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as BS8
-import qualified Data.ByteString.Lazy as BSL
-import           Data.Byteable (constEqBytes)
-import qualified Data.Serialize as Serialize
 import           Data.Word (Word8)
-import           Numeric
-import qualified System.IO.Unsafe as Unsafe
 
 import           Pontarius.E2E.Monad
 import           Pontarius.E2E.Types
@@ -62,6 +45,9 @@ decryptDataMessage msg = do
                  , theirKeyID = theirKeyID s + 1
                  }
 
+makeMessageKeys :: Integer
+                -> Integer
+                -> E2E g MessageKeys
 makeMessageKeys tKeyID oKeyID = do
     s <- get
     tck <- case ( tKeyID == theirKeyID s - 1
@@ -97,3 +83,20 @@ makeMessageKeys tKeyID oKeyID = do
              , recvEncKey
              , recvMacKey
              }
+
+encryptDataMessage :: BS.ByteString -> E2E g DataMessage
+encryptDataMessage payload = do
+    s <- get
+    unless (msgState s == MsgStateEncrypted) $ throwError (WrongState "encryptDataMessage")
+    mk <- makeMessageKeys (theirKeyID s) (ourKeyID s)
+    pl <- encCtr (encodeInteger $ counter s) (sendEncKey mk) payload
+    let msg = DM { senderKeyID = ourKeyID s
+                 , recipientKeyID = theirKeyID s
+                 , nextDHy = pub $ nextDH s
+                 , ctrHi  = encodeInteger $ counter s
+                 , messageEnc = pl
+                 , messageMAC = BS.empty
+                 }
+    messageMAC <- mac (sendMacKey mk) (encodeMessageBytes msg)
+    put s{counter = counter s + 1}
+    return $ msg{messageMAC = messageMAC}
