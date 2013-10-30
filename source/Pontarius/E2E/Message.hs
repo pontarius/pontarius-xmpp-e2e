@@ -25,7 +25,7 @@ decryptDataMessage msg = do
     case () of () | recipientKeyID msg == ourKeyID s     -> return ()
                   | recipientKeyID msg == ourKeyID s + 1 -> shiftKeys
                   | otherwise -> throwError $ ProtocolError WrongKeyID ""
-    pl <- decCtr (ctrHi msg) recvEncKey (messageEnc msg)
+    pl <- decCtr recvEncKey (ctrHi msg) (messageEnc msg)
     shiftTheirKeys (nextDHy msg) (senderKeyID msg)
     return pl
   where
@@ -89,7 +89,7 @@ encryptDataMessage payload = do
     s <- get
     unless (msgState s == MsgStateEncrypted) $ throwError (WrongState "encryptDataMessage")
     mk <- makeMessageKeys (theirKeyID s) (ourKeyID s)
-    pl <- encCtr (encodeInteger $ counter s) (sendEncKey mk) payload
+    pl <- encCtr (sendEncKey mk) (encodeInteger $ counter s) payload
     let msg = DM { senderKeyID = ourKeyID s
                  , recipientKeyID = theirKeyID s
                  , nextDHy = pub $ nextDH s
