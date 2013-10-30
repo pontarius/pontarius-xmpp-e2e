@@ -183,8 +183,9 @@ akeMessageSelector DHKeyMessage{}           = 1
 akeMessageSelector RevealSignatureMessage{} = 2
 akeMessageSelector SignatureMessage{}       = 3
 
-akeMessageXml :: PU [Node] E2EAkeMessage
-akeMessageXml = xpAlt akeMessageSelector
+akeMessageXml :: PU [Element] E2EAkeMessage
+akeMessageXml = xpUnliftElems $
+                xpChoice akeMessageSelector
                       [ xpWrap DHCommitMessage unDHCommitMessage
                                dhCommitMessageXml
                       , xpWrap DHKeyMessage unDHKeyMessage
@@ -198,11 +199,12 @@ akeMessageXml = xpAlt akeMessageSelector
                       ]
 
 
-endSessionMessageXml :: PU [Node] ()
-endSessionMessageXml = xpElemBlank (e2eName "end-session")
+endSessionMessageXml :: PU [Element] ()
+endSessionMessageXml = xpUnliftElems $ xpElemBlank (e2eName "end-session")
 
-dataMessageXml :: PU [Node] DataMessage
-dataMessageXml = xpWrap (\(skid, rkid, ndh, ctr, menc, mmac) ->
+dataMessageXml :: PU [Element] DataMessage
+dataMessageXml = xpUnliftElems .
+                 xpWrap (\(skid, rkid, ndh, ctr, menc, mmac) ->
                           DM skid rkid ndh ctr menc mmac)
                         (\(DM skid rkid ndh ctr menc mmac) ->
                           (skid, rkid, ndh, ctr, menc, mmac)) $
@@ -219,8 +221,23 @@ e2eMessageSelector E2EAkeMessage{} = 0
 e2eMessageSelector E2EDataMessage{} = 1
 e2eMessageSelector E2EEndSessionMessage{} = 2
 
-e2eMessageXml = xpAlt e2eMessageSelector
+e2eMessageXml = xpChoice e2eMessageSelector
                 [ xpWrap E2EAkeMessage unE2EAkeMessage akeMessageXml
                 , xpWrap E2EDataMessage unE2EDataMessage dataMessageXml
                 , xpConst E2EEndSessionMessage endSessionMessageXml
                 ]
+
+e2eRequestXml :: PU [Element] ()
+e2eRequestXml = xpUnliftElems .
+                xpConst () $ xpElemBlank (e2eName "session-request")
+
+e2eResponseXml :: PU Element Bool
+e2eResponseXml = xpRoot . xpUnliftElems .
+                 xpElemNodes (e2eName "session-response") $
+                 xpChoice responseSelector
+                 [ xpConst True  $ xpElemBlank (e2eName "proceed")
+                 , xpConst False $ xpElemBlank (e2eName "declined")
+                 ]
+  where
+    responseSelector True = 0
+    responseSelector False = 0

@@ -1,5 +1,18 @@
 {-# LANGUAGE RecordWildCards #-}
-module Pontarius.E2E.Session where
+module Pontarius.E2E.Session
+       ( newSession
+       , initiator
+       , responder
+       , E2ESession
+       , endSession
+       , startAke
+       , takeAkeMessage
+       , takeDataMessage
+       , takeMessage
+       , sendDataMessage
+       )
+
+       where
 import           Control.Applicative((<$>))
 import           Control.Concurrent hiding (yield)
 import qualified Control.Exception as Ex
@@ -13,6 +26,7 @@ import           Pontarius.E2E.Monad
 import           Pontarius.E2E.Types
 import           Pontarius.E2E.Helpers
 import           Pontarius.E2E.Message
+import           Pontarius.E2E.AKE (alice, bob)
 
 data E2ESession g = E2ESession { e2eGlobals :: E2EGlobals
                                , e2eState :: MVar (Either (RunState g)
@@ -24,6 +38,7 @@ data E2ESession g = E2ESession { e2eGlobals :: E2EGlobals
                                , onSmpAuthChange :: Bool -> IO ()
                                }
 
+-- | Run a computation, accumulating all output until it expects more input ends.
 runMessaging :: RunState g
              -> Either E2EError ( Either (RunState g) (E2EState, g)
                                 , [BS.ByteString]
@@ -65,11 +80,13 @@ newSession globals sGen oss osmp sm = do
                      , onSmpAuthChange = osmp
                      }
 
-withSession :: E2ESession g -> E2E g () -> IO (Either E2EError (Maybe Bool))
+withSession :: E2ESession g
+            -> E2E g ()
+            -> IO (Either E2EError ([E2EMessage], Maybe MsgState, Maybe Bool))
 withSession session go = do
     se <- takeMVar $ e2eState session
     case se of
-        Left _ -> return . Left $ WrongState "sendDataMessage"
+        Left _ -> return . Left $ WrongState "withSession"
         Right (s, g) -> case runMessaging $ runE2E (e2eGlobals session) s g go of
             Left e -> return $ Left e
             Right (rc, _ys, os, ss, a) -> do
@@ -77,7 +94,7 @@ withSession session go = do
                 maybe (return ()) (onStateChange session) ss
                 maybe (return ()) (onSmpAuthChange session) a
                 putMVar (e2eState session) rc
-                return $ Right a
+                return $ Right (os, ss, a)
 
 endSession :: E2ESession CRandom.SystemRNG -> IO ()
 endSession session = do
@@ -86,7 +103,7 @@ endSession session = do
         Left _ -> do
             onSendMessage session E2EEndSessionMessage
             return True
-        Right (s,g) -> return (msgState s == MsgStatePlaintext)
+        Right (s,_g) -> return (msgState s == MsgStatePlaintext)
     if p then do
         g <- CRandom.cprgCreate <$> CRandom.createEntropyPool
                                         :: IO CRandom.SystemRNG
@@ -96,15 +113,17 @@ endSession session = do
         else putMVar (e2eState session) se
 
 
-
 startAke :: E2ESession CRandom.SystemRNG
          -> E2E CRandom.SystemRNG ()
-         -> IO (Either E2EError (Maybe Bool))
+         -> IO (Either E2EError ([E2EMessage], Maybe MsgState, Maybe Bool))
 startAke session side = do
     endSession session
     withSession session side
 
-sendDataMessage msg session = fmap void . withSession session $ do
+sendDataMessage :: BS.ByteString
+                -> E2ESession g
+                -> IO (Either E2EError ([E2EMessage], Maybe MsgState, Maybe Bool))
+sendDataMessage msg session = withSession session $ do
     m <- encryptDataMessage msg
     sendMessage $ E2EDataMessage m
 
@@ -115,6 +134,20 @@ handleDataMessage msg = do
     msgPl <- decryptDataMessage msg
     unless (BS.null msgPl) $ yield msgPl
 
+
+takeAkeMessage :: CRandom.CPRG g
+               => E2ESession g
+               -> E2EAkeMessage
+               -> IO (Either E2EError [BS.ByteString])
+takeAkeMessage sess = takeMessage sess . E2EAkeMessage
+
+
+takeDataMessage :: CRandom.CPRG g
+               => E2ESession g
+               -> DataMessage
+               -> IO (Either E2EError [BS.ByteString])
+takeDataMessage sess = takeMessage sess . E2EDataMessage
+
 takeMessage :: CRandom.CPRG g
             => E2ESession g
             -> E2EMessage
@@ -123,12 +156,19 @@ takeMessage (E2ESession globals s _sGen sm oss osmp) msg =
     Ex.bracketOnError (takeMVar s)
                       (putMVar s) $ \rs -> do
     let r = case rs of
+            -- There's no suspended computation, so we can start a new one
             Right (st, g) -> case msg of
                 E2EDataMessage msg' -> runE2E globals st g $ handleDataMessage msg'
                 _ -> error "not yet implemented" -- TODO
+            -- We have a suspended computation that expects a message, so we pass it the message
             Left (RecvMessage rcm) -> rcm msg
+            -- We have a suspended computation that want to send a message. This should never happen
+            -- because computations are run until they expect input (all output is consumed)
             Left SendMessage{} -> error "Inconsistent state, takeMessagecalled with SendMessage "
+            -- See above
             Left Yield{} -> error "Inconsistent state, takeMessagecalled with Yield "
+            -- We have a suspended computation that has ended. This should not
+            -- happen since finished computations are replaced with returned state
             Left Return{} -> error "Inconsistent state, takeMessagecalled with Yield "
 --            Left AskSmpSecret{} -> error $ "Inconsistent state, takeMessagecalled with Yield "
     go [] [] r rs
@@ -148,3 +188,10 @@ takeMessage (E2ESession globals s _sGen sm oss osmp) msg =
             maybe (return ()) oss ss
             maybe (return ()) osmp a
             return $ Right ys
+
+
+initiator :: CRandom.CPRG g => E2E g ()
+initiator = alice
+
+responder :: CRandom.CPRG g => E2E g ()
+responder = bob

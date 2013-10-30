@@ -3,7 +3,8 @@
 {-# LANGUAGE RecordWildCards #-}
 module Pontarius.E2E
        ( newSession
-       , takeMessage
+       , takeAkeMessage
+       , takeDataMessage
        , alice
        , bob
        , e2eDefaultParameters

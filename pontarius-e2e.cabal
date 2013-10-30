@@ -41,9 +41,11 @@ library
                      , random
                      , mtl
                      , transformers
-                     , xml-picklers
+                     , xml-picklers >= 0.3.4
                      , xml-types
                      , pontarius-xmpp
+                     , stm
+                     , containers
 -- helpers
                      , pem
                      , certificate
