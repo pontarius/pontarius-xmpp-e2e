@@ -122,22 +122,15 @@ keyDerivs s = do
     h <-  parameter paramHash
     let secBytes = encodeInteger $ s
         h2 b = h $ BS.singleton b `BS.append` secBytes
-        kdSsid = BS.take 8 $ h2 0x00
-        kdC    = h2 0x00
-        kdC'   = h2 0x01
-        kdM1   = h2 0x03
-        kdM2   = h2 0x04
-        kdM1'  = h2 0x05
-        kdM2'  = h2 0x06
-    let kd = KD{ kdSsid = kdSsid
-               , kdC    = kdC
-               , kdC'   = kdC'
-               , kdM1   = kdM1
-               , kdM2   = kdM2
-               , kdM1'  = kdM1'
-               , kdM2'  = kdM2'
-               }
-    return kd
+    return KD{ kdSsid = BS.take 8 $ h2 0x00
+             , kdC    = h2 0x01
+             , kdC'   = h2 0x02
+             , kdM1   = h2 0x03
+             , kdM2   = h2 0x04
+             , kdM1'  = h2 0x05
+             , kdM2'  = h2 0x06
+             }
+
 
 mkAuthMessage :: CRandom.CPRG g => AuthKeys -> E2E g SignatureMessage
 mkAuthMessage keyType = do
