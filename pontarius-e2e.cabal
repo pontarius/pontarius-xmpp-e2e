@@ -36,6 +36,8 @@ library
                      , crypto-pubkey
                      , cryptohash
                      , cipher-aes
+                     , data-default
+                     , conduit
                      , monadcryptorandom
                      , cereal
                      , random
@@ -43,6 +45,7 @@ library
                      , transformers
                      , xml-picklers >= 0.3.4
                      , xml-types
+                     , xml-conduit
                      , pontarius-xmpp
                      , stm
                      , containers

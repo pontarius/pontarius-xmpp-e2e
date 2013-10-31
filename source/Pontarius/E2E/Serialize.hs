@@ -4,6 +4,7 @@ module Pontarius.E2E.Serialize
 where
 
 import           Control.Applicative ((<$>), (<*>))
+import           Control.Exception (SomeException)
 import           Control.Monad
 import           Control.Monad.Error
 import qualified Crypto.PubKey.DSA as DSA
@@ -15,6 +16,8 @@ import qualified Data.ByteString.Base64 as B64
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Lazy.Builder as BSB
+import           Data.Conduit (($=),($$), ConduitM, await, yield)
+import qualified Data.Conduit.List as CL
 import           Data.Foldable (foldMap)
 import           Data.List
 import           Data.Monoid(mappend)
@@ -24,7 +27,12 @@ import qualified Data.Text.Encoding as Text
 import           Data.Word
 import           Data.XML.Pickle
 import           Data.XML.Types
+import           Network.Xmpp.Marshal (xpStanza)
+import           Network.Xmpp.Stream (elements)
+import           Network.Xmpp.Types (Stanza)
+import           Network.Xmpp.Utilities (renderElement)
 import           Pontarius.E2E.Types
+import           Text.XML.Stream.Parse
 
 
 -- | Will be [] for x <= 0
@@ -241,3 +249,42 @@ e2eResponseXml = xpRoot . xpUnliftElems .
   where
     responseSelector True = 0
     responseSelector False = 0
+
+filterOutJunk :: Monad m => ConduitM Event Event m ()
+filterOutJunk = go
+  where
+    go = do
+        next <- await
+        case next of
+            Nothing -> return () -- This will only happen if the stream is closed.
+            Just n -> do
+                case n of
+                    EventBeginElement{}   -> yield n
+                    EventEndElement{}     -> yield n
+                    EventContent{}        -> yield n
+                    EventCDATA{}          -> yield n
+                    EventBeginDocument{}  -> return ()
+                    EventEndDocument{}    -> return ()
+                    EventBeginDoctype{}   -> return ()
+                    EventEndDoctype{}     -> return ()
+                    EventInstruction{}    -> return ()
+                    EventComment{}        -> return ()
+                go
+
+
+xpStanza' :: PU Element Stanza
+xpStanza' = xpRoot . xpUnliftElems $ xpStanza
+
+renderStanza :: Stanza -> BS.ByteString
+renderStanza = renderElement . pickle xpStanza'
+
+readStanzas :: BS.ByteString -> Either String [Stanza]
+readStanzas bs = es >>= mapM (\el -> case unpickle xpStanza' el of
+                                   Left e -> Left $ ppUnpickleError e
+                                   Right r -> Right r
+                             )
+  where
+    es = case CL.sourceList [bs] $= parseBytes def $= filterOutJunk $= elements
+              $$ CL.consume of
+        Left e -> Left $ show (e :: SomeException)
+        Right r -> Right r

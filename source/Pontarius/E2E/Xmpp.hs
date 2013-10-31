@@ -21,6 +21,7 @@ import           Pontarius.E2E
 import           Pontarius.E2E.Serialize
 import           Pontarius.E2E.Session
 import           Pontarius.E2E.Types
+import           Network.Xmpp.Types
 import           System.Log.Logger
 
 -- PEM
@@ -128,9 +129,8 @@ handleE2E policy cfg sem sta = do
                     Just s -> do
                         case msg' of
                             E2EDataMessage dm -> do
-                                res <- takeDataMessage s dm
-                                print res
-                                return (sess, [])
+                                res <- handleDataMessage s dm
+                                return (sess, map (setFrom from) res)
                             E2EAkeMessage am -> do
                                 res <- takeMessage s msg'
                                 case res of
@@ -152,6 +152,29 @@ handleE2E policy cfg sem sta = do
 
         _ -> return [sta]
   where
+    handleDataMessage s dm = do
+        res <- takeDataMessage s dm
+        case res of
+            Left e -> do
+                errorM "Pontarius.Xmpp.E2E" $
+                    "Receiving data message produced error" ++ show e
+                return []
+            Right r -> case readStanzas (BS.concat r) of
+                Left e -> do
+                    errorM "Pontarius.Xmpp.E2E" $
+                              "Reading data message produced error" ++ show e
+                    return []
+                Right r -> do
+                    infoM "Pontarius.Xmpp.E2E" $ "e2e in: " ++ show r
+                    return r
+    setFrom from (MessageS m) = MessageS m{messageFrom = Just from}
+    setFrom from (MessageErrorS m) = MessageErrorS m{messageErrorFrom = Just from}
+    setFrom from (PresenceS m) = PresenceS m{presenceFrom = Just from}
+    setFrom from (PresenceErrorS m) = PresenceErrorS m{presenceErrorFrom = Just from}
+    setFrom from (IQRequestS m) = IQRequestS m{iqRequestFrom = Just from}
+    setFrom from (IQResultS m) = IQResultS m{iqResultFrom = Just from}
+    setFrom from (IQErrorS m) = IQErrorS m{iqErrorFrom = Just from}
+
     expectSession iqr = do
         case Xmpp.iqRequestFrom iqr
              of Nothing -> return ()
@@ -229,12 +252,12 @@ startE2E to sessions onSS xmppSession = do
                                      } xmppSession
         return ()
 
-sendE2EMsg cfg to msg = do
+sendE2EMsg cfg to sta = do
     ps <- atomically $ readTMVar (peers cfg)
     case Map.lookup to ps of
         Nothing -> return False
         Just p -> do
-            res <- sendDataMessage msg p
+            res <- sendDataMessage (renderStanza sta) p
             return $ case res of
                 Left{} -> False
                 Right{} -> True

@@ -10,10 +10,12 @@ import           Control.Monad
 import           Data.Default (def)
 import           Network
 import qualified Network.Xmpp as Xmpp
+import qualified Network.Xmpp.Internal as Xmpp
 import           Pontarius.E2E
 import           Pontarius.E2E.Serialize (e2eNs)
 import           Pontarius.E2E.Types
 import           Pontarius.E2E.Xmpp
+import           System.IO
 import           System.Log.Logger
 
 
@@ -37,6 +39,11 @@ thread1 = do
              (Just (\_ -> [Xmpp.scramSha1 username1 Nothing password]
                      , resource))
              config{ Xmpp.extraStanzaHandlers = [handleE2E (\_ -> return True) cfg] }
+    forkIO . forever $ do
+        m <- Xmpp.pullMessage sess
+        infoM "Pontarius.Xmpp.E2E" $ "received message: " ++ show m
+        hFlush stdout
+
     forever $ threadDelay 1000000
     return ()
 
@@ -51,17 +58,15 @@ thread2 = do
              (Just (\_ -> [Xmpp.scramSha1 username2 Nothing password]
                      , resource))
              config{ Xmpp.extraStanzaHandlers = [handleE2E (\_ -> return True) cfg] }
-    Xmpp.sendMessage Xmpp.message{ Xmpp.messageTo = Just
-                                [Xmpp.jidQ|testuser1@species64739.dyndns.org/bot|]
-                                 } sess
     let peer = [Xmpp.jidQ|testuser1@species64739.dyndns.org/bot|]
     startE2E peer cfg (atomically . putTMVar sem)  sess
     atomically (takeTMVar sem) >>= print
-    sendE2EMsg cfg peer "Hello there!"
-    debugM "Pontarius.Xmpp.E2E" "sent"
+    sendE2EMsg cfg peer $ Xmpp.MessageS Xmpp.message{ Xmpp.messageTo = Just peer }
+    infoM "Pontarius.Xmpp.E2E" "sent"
     return ()
 
 main = do
-    updateGlobalLogger "Pontarius.Xmpp" $ setLevel DEBUG
+    updateGlobalLogger "Pontarius.Xmpp" $ setLevel INFO
     forkIO thread1
     thread2
+    threadDelay $ 5*10^6
