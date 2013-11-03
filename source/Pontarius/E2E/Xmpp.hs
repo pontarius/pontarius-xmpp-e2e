@@ -54,33 +54,6 @@ sendE2eMessage xmppSession to msg  = do
 
 data Side = Initiator | Responder deriving (Show, Eq)
 
--- newContext :: DSAKeyPair
---            -> Xmpp.Jid
---            -> Side
---            -> (Maybe BS.ByteString -> IO BS.ByteString)
---            -> (MsgState -> IO ())
---            -> (Bool -> IO ())
---            -> Xmpp.Session
---            -> IO E2EContext
--- newContext dsaKey to side mkSecret oss onAuthChange xmppSession = do
---     sess <- newSession (E2EG e2eDefaultParameters dsaKey) mkSecret oss onAuthChange (sendE2eMessage xmppSession to)
---     _ <- startAke sess (case side of Initiator -> alice; Responder -> bob)
---     return $ E2ECtx sess to
-
--- recvMessage :: Xmpp.Message
---             -> E2EContext
---             -> IO (Maybe (Either E2EError [BS.ByteString]))
--- recvMessage msg ctx = do
---     if Xmpp.messageFrom msg /= Just (peer ctx)
---         then return Nothing
---         else case unpickle (xpClean e2eMessageXml)
---                            $ Xmpp.messagePayload msg of
---                  Left _ -> return Nothing
---                  Right msg' -> Just <$> takeMessage (e2eSess ctx) msg'
-
--- sendMsg :: BS.ByteString -> E2EContext -> IO (Either E2EError ())
--- sendMsg msg ctx = sendDataMessage msg (e2eSess ctx)
-
 getKey :: FilePath -> IO (DSA.PublicKey, DSA.PrivateKey)
 getKey keyFile = do
     Right ((PEM pName _ bs) : _) <- pemParseLBS `fmap` (BSL.readFile keyFile)
