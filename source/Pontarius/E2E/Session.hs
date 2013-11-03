@@ -21,6 +21,7 @@ import           Control.Monad.Identity (runIdentity)
 import           Control.Monad.Reader (runReaderT)
 import qualified Crypto.Random as CRandom
 import qualified Data.ByteString as BS
+import Data.Maybe (listToMaybe)
 
 import           Pontarius.E2E.Monad
 import           Pontarius.E2E.Types
@@ -135,23 +136,37 @@ handleDataMessage msg = do
     unless (BS.null msgPl) $ yield msgPl
 
 
-takeAkeMessage :: CRandom.CPRG g
-               => E2ESession g
-               -> E2EAkeMessage
-               -> IO (Either E2EError [BS.ByteString])
-takeAkeMessage sess = takeMessage sess . E2EAkeMessage
+takeAkeMessage :: CRandom.CPRG g =>
+                  E2ESession g
+                  -> E2EAkeMessage
+                  -> IO (Either E2EError (Maybe E2EAkeMessage))
+takeAkeMessage sess msg  = do
+    res <- takeMessage sess $ E2EAkeMessage msg
+    case res of
+        Left e -> return $ Left e
+        Right (_,_:_)   -> error "AKE yielded payload"
+        Right (_:_,_:_) -> error "Too many response messages"
+        Right ([], _)   -> return $ Right Nothing
+        Right ([E2EAkeMessage m], _)   -> return . Right $ Just m
+        Right ([_], _)   -> error "AKE tried to send non-AKE message"
 
-
-takeDataMessage :: CRandom.CPRG g
-               => E2ESession g
-               -> DataMessage
-               -> IO (Either E2EError [BS.ByteString])
-takeDataMessage sess = takeMessage sess . E2EDataMessage
+takeDataMessage :: CRandom.CPRG g =>
+                   E2ESession g
+                   -> DataMessage
+                   -> IO (Either E2EError BS.ByteString)
+takeDataMessage sess msg = do
+    res <- takeMessage sess $ E2EDataMessage msg
+    case res of
+        Left e -> return $ Left e
+        Right (_:_,_:_) -> error "decrypt yielded response message"
+        Right ([], [])   -> error "Data message didn't yield"
+        Right ([], (_:_:_)) -> error "Too many yields"
+        Right ([], [y])   -> return $ Right y
 
 takeMessage :: CRandom.CPRG g
             => E2ESession g
             -> E2EMessage
-            -> IO (Either E2EError [BS.ByteString])
+            -> IO (Either E2EError ([E2EMessage], [BS.ByteString]))
 takeMessage (E2ESession globals s _sGen sm oss osmp) msg =
     Ex.bracketOnError (takeMVar s)
                       (putMVar s) $ \rs -> do
@@ -182,12 +197,15 @@ takeMessage (E2ESession globals s _sGen sm oss osmp) msg =
         --     go (ys' ++ ys) (os' ++ os) (r' s) rs
         Right (Left (AskSmpSecret _ _),  _, _, _, _) ->
             error "state change before secret"
+        Right (rs', ys, os@(_:_:_), ss, a) -> error $
+                                              "Too many answer messages"
+                                              ++ show os
         Right (rs', ys, os, ss, a) -> do
             putMVar s rs'
             forM_ os sm
             maybe (return ()) oss ss
             maybe (return ()) osmp a
-            return $ Right ys
+            return $ Right (os,ys)
 
 
 initiator :: CRandom.CPRG g => E2E g ()

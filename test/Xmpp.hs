@@ -38,7 +38,7 @@ thread1 = do
     Right sess <- Xmpp.session realm
              (Just (\_ -> [Xmpp.scramSha1 username1 Nothing password]
                      , resource))
-             config{ Xmpp.extraStanzaHandlers = [handleE2E (\_ -> return True) cfg] }
+             config{ Xmpp.extraStanzaHandlers = [handleE2E (\_ -> return $ Just True) cfg] }
     forkIO . forever $ do
         m <- Xmpp.pullMessage sess
         infoM "Pontarius.Xmpp.E2E" $ "received message: " ++ show m
@@ -57,16 +57,16 @@ thread2 = do
     Right sess <- Xmpp.session realm
              (Just (\_ -> [Xmpp.scramSha1 username2 Nothing password]
                      , resource))
-             config{ Xmpp.extraStanzaHandlers = [handleE2E (\_ -> return True) cfg] }
+             config{ Xmpp.extraStanzaHandlers = [handleE2E (\_ -> return $ Just True) cfg] }
     let peer = [Xmpp.jidQ|testuser1@species64739.dyndns.org/bot|]
     startE2E peer cfg (atomically . putTMVar sem)  sess
     atomically (takeTMVar sem) >>= print
-    sendE2EMsg cfg peer $ Xmpp.MessageS Xmpp.message{ Xmpp.messageTo = Just peer }
+    sendE2EMsg cfg peer (Xmpp.MessageS Xmpp.message{ Xmpp.messageTo = Just peer}) sess
     infoM "Pontarius.Xmpp.E2E" "sent"
     return ()
 
 main = do
-    updateGlobalLogger "Pontarius.Xmpp" $ setLevel INFO
+    updateGlobalLogger "Pontarius.Xmpp" $ setLevel DEBUG
     forkIO thread1
     thread2
     threadDelay $ 5*10^6

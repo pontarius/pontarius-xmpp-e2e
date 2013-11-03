@@ -43,6 +43,7 @@ library
                      , random
                      , mtl
                      , transformers
+                     , either
                      , xml-picklers >= 0.3.4
                      , xml-types
                      , xml-conduit

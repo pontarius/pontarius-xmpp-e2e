@@ -235,21 +235,6 @@ e2eMessageXml = xpChoice e2eMessageSelector
                 , xpConst E2EEndSessionMessage endSessionMessageXml
                 ]
 
-e2eRequestXml :: PU [Element] ()
-e2eRequestXml = xpUnliftElems .
-                xpConst () $ xpElemBlank (e2eName "session-request")
-
-e2eResponseXml :: PU Element Bool
-e2eResponseXml = xpRoot . xpUnliftElems .
-                 xpElemNodes (e2eName "session-response") $
-                 xpChoice responseSelector
-                 [ xpConst True  $ xpElemBlank (e2eName "proceed")
-                 , xpConst False $ xpElemBlank (e2eName "declined")
-                 ]
-  where
-    responseSelector True = 0
-    responseSelector False = 0
-
 filterOutJunk :: Monad m => ConduitM Event Event m ()
 filterOutJunk = go
   where
