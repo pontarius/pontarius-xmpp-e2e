@@ -284,7 +284,7 @@ startE2E :: Xmpp.Jid
          -> Xmpp.Session
          -> IO ()
 startE2E to sessions onSS xmppSession = do
-    withTMVar (peers sessions) $ \sess -> do
+    s <- withTMVar (peers sessions) $ \sess -> do
         case Map.lookup to sess of
             --Xmpp.sendIQ
             Nothing -> return ()
@@ -292,28 +292,54 @@ startE2E to sessions onSS xmppSession = do
             Just s -> doEndSession to xmppSession
         s <- newSession (globals sessions) (getSecret sessions) onSS
                     (\_ -> return ()) (\_ -> return ())
-        Right ([E2EAkeMessage msg], st, smp) <- startAke s initiator
-        Just answer' <- Xmpp.sendIQ Nothing (Just to) Xmpp.Set Nothing
+        let sess' = Map.insert to s sess
+        return (sess', s)
+    Right ([E2EAkeMessage msg1], st, smp) <- startAke s initiator
+    res <- runMaybeT $ do
+        Just msg2 <- step s msg1
+        Nothing <- step s msg2
+        return ()
+    case res of
+        Nothing -> do
+            doEndSession to xmppSession
+            withTMVar (peers sessions) $ \s -> return (Map.delete to s, ())
+            onSS MsgStatePlaintext
+        Just _ -> return ()
+  where
+    step :: E2ESession CRandom.SystemRNG
+            -> E2EAkeMessage
+            -> MaybeT IO (Maybe E2EAkeMessage)
+    step s msg = do
+        Just answer' <- liftIO $ Xmpp.sendIQ Nothing (Just to) Xmpp.Set Nothing
                      (pickle (xpRoot akeMessageXml) msg) xmppSession
-        answer <- atomically $ takeTMVar answer'
+        answer <- liftIO . atomically $ takeTMVar answer'
         iqr <- case answer of
             IQResponseResult r -> return r
-            e -> error $ show e -- TODO
-        let Just el = iqResultPayload iqr
-            Right akeMsg = unpickle (xpRoot akeMessageXml) el
-        Right (Just msg2) <- takeAkeMessage s akeMsg
-        Just answer' <- Xmpp.sendIQ Nothing (Just to) Xmpp.Set Nothing
-                     (pickle (xpRoot akeMessageXml) msg2) xmppSession
-        answer <- atomically $ takeTMVar answer'
-        iqr2 <- case answer of
-            IQResponseResult r -> return r
-            e -> error $ show e -- TODO
-        let Just el2 = iqResultPayload iqr2
-            Right akeMsg2 = unpickle (xpRoot akeMessageXml) el2
-        Right Nothing <- takeAkeMessage s akeMsg2
+            IQResponseError e -> do
+                liftIO . errorM "Pontarius.Xmpp.E2E" $ "Got IQ error " ++ show e
+                mzero
+            IQResponseTimeout -> do
+                liftIO $ errorM "Pontarius.Xmpp.E2E" "Got IQ timeout "
+                mzero
+        el <- case iqResultPayload iqr of
+            Nothing -> do
+                liftIO . errorM "Pontarius.Xmpp.E2E" $ "Got empty IQ response"
+                mzero
+            Just p -> return p
+        msg <- case unpickle (xpRoot akeMessageXml) el of
+            Left e -> do
+                liftIO . errorM "Pontarius.Xmpp.E2E" $ "Unpickle error: "
+                                ++ ppUnpickleError e
+                mzero
+            Right r -> return r
+        res <- liftIO $ takeAkeMessage s msg
+        case res of
+            Left e -> do
+                liftIO . errorM "Pontarius.Xmpp.E2E" $ "Got protocol error : "
+                                ++ show e
+                mzero
+            Right r -> return r
 
-
-        return (Map.insert to s sess, ())
 
 doEndSession to xmppSession = do
     let xml = pickle endSessionMessageXml ()
