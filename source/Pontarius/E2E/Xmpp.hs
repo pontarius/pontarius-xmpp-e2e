@@ -278,6 +278,9 @@ e2eInit globals sGen  = do
     peers <- newTMVarIO Map.empty
     return $ E2ECfg peers globals sGen
 
+-- | Start an E2E session with peer. This may block indefinitly (because the
+-- other side may have to ask the user whether to accept the session). So it
+-- can be necessary to run this in another thread or add a timeout.
 startE2E :: Xmpp.Jid
          -> E2EConfig
          -> (MsgState -> IO ())
