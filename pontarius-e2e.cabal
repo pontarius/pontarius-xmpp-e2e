@@ -50,7 +50,7 @@ library
                      , pontarius-xmpp
                      , stm
                      , containers
--- helpers
+-- helpers; remove before release
                      , pem
                      , certificate
                      , text
@@ -61,5 +61,6 @@ library
                      , network
                      , stm
                      , hslogger
+                     , lens
 
   ghc-options: -Wall -fno-warn-orphans

@@ -11,16 +11,19 @@ import           Control.Concurrent.STM
 import           Control.Exception as Ex
 import           Control.Monad
 import           Control.Monad.Trans
-import           Control.Monad.Trans.Maybe
 import           Control.Monad.Trans.Either
+import           Control.Monad.Trans.Maybe
 import qualified Crypto.Random as CRandom
 import qualified Data.ByteString as BS
+import           Data.List (find)
 import qualified Data.Map as Map
 import           Data.XML.Pickle
 import           Data.XML.Types
 import qualified Network.Xmpp as Xmpp
+import           Network.Xmpp.Concurrent.Types as Xmpp
 import qualified Network.Xmpp.Internal as Xmpp
-import           Network.Xmpp.Types
+import           Network.Xmpp.Lens
+import           Network.Xmpp.Types as Xmpp
 import           Pontarius.E2E
 import           Pontarius.E2E.Serialize
 import           Pontarius.E2E.Session
@@ -34,23 +37,6 @@ import           Data.ASN1.Encoding
 import           Data.ASN1.Types hiding (Set)
 import qualified Data.ByteString.Lazy as BSL
 import           Data.PEM
-
-sendE2eMessage xmppSession to msg  = do
-    let xml = pickle (xpRoot e2eMessageXml) msg
-    case msg of
-        E2EDataMessage{} -> Xmpp.sendMessage
-                            Xmpp.message{ Xmpp.messageTo = Just to
-                                        , Xmpp.messagePayload = [xml]
-                                        } xmppSession
-        E2EAkeMessage{} -> iqSendHelper xml
-        E2EEndSessionMessage -> iqSendHelper xml
-    return ()
-  where
-    iqSendHelper pl = do
-        res <- Xmpp.sendIQ' (Just to) Xmpp.Set Nothing pl xmppSession
-        case res of
-            Just Xmpp.IQResponseResult{} -> return True
-            _ -> return False
 
 data Side = Initiator | Responder deriving (Show, Eq)
 
@@ -69,14 +55,20 @@ withTMVar mv f = Ex.bracketOnError (atomically $ takeTMVar mv)
                                        atomically $ putTMVar mv v'
                                        return a
 
-data E2EConfig = E2ECfg{ peers :: TMVar (Map.Map Xmpp.Jid
+data E2EContext = E2EContext { peers :: TMVar (Map.Map Xmpp.Jid
                                                  (E2ESession CRandom.SystemRNG))
---                       , xmppSession :: Xmpp.Session
-                       , globals :: E2EGlobals
-                       , getSecret :: Maybe BS.ByteString -> IO BS.ByteString
-                       }
+                             , sessRef :: TVar (Maybe Xmpp.Session)
+                             , globals :: E2EGlobals
+                             , getSecret :: Maybe BS.ByteString
+                                             -> IO BS.ByteString
+                             }
 
-handleE2E policy cfg sem sta = do
+handleE2E :: (Jid -> IO (Maybe Bool))
+             -> E2EContext
+             -> (Stanza -> IO a)
+             -> Stanza
+             -> IO [Stanza]
+handleE2E policy sess out sta = do
     case sta of
         Xmpp.IQRequestS iqr -> case unpickle (xpRoot . xpOption
                                               $ akeMessageXml)
@@ -110,7 +102,7 @@ handleE2E policy cfg sem sta = do
                                               left []
                         _ -> left [sta]
             guard . (== Just True)  =<< liftIO (policy from)
-            liftIO . withTMVar (peers cfg) $ \sess ->
+            liftIO . withTMVar (peers sess) $ \sess ->
                 case Map.lookup from sess of
                     Nothing -> do
                         endE2E from
@@ -163,7 +155,7 @@ handleE2E policy cfg sem sta = do
             Just True -> return ()
 
         liftIO $ case msg of
-            m@DHCommitMessage{} -> withTMVar (peers cfg) $ \sess -> do
+            m@DHCommitMessage{} -> withTMVar (peers sess) $ \sess -> do
                 case Map.lookup from sess of
                     Nothing -> do
                         mbS <- startSession iqr from m
@@ -176,7 +168,7 @@ handleE2E policy cfg sem sta = do
                                ++ show from
                         conflict iqr
                         return (sess, ())
-            m@RevealSignatureMessage{} -> withTMVar (peers cfg) $ \sess -> do
+            m@RevealSignatureMessage{} -> withTMVar (peers sess) $ \sess -> do
                 case Map.lookup from sess of
                     Nothing -> do
                         errorM "Pontarius.Xmpp.E2E" $
@@ -205,7 +197,7 @@ handleE2E policy cfg sem sta = do
 
 
     startSession iqr from m = do
-        s <- newSession (globals cfg) (getSecret cfg)
+        s <- newSession (globals sess) (getSecret sess)
                                (\_ -> return ()) (\_ -> return ()) (\_ -> return ())
         startAke s responder
         res <- takeAkeMessage s m
@@ -220,19 +212,18 @@ handleE2E policy cfg sem sta = do
                 return $ Just s
     endE2E from = do
         let abortE = pickle endSessionMessageXml ()
-        Xmpp.writeStanza sem $ Xmpp.MessageS
-            Xmpp.message{ Xmpp.messageTo = Just from
-                        , Xmpp.messagePayload = abortE
-                        }
+        out $ Xmpp.MessageS Xmpp.message{ Xmpp.messageTo = Just from
+                                        , Xmpp.messagePayload = abortE
+                                        }
         return ()
     checkNS e f = if nameNamespace (elementName e) == Just e2eNs
                   then f e
                   else return [sta]
-    badRequest = Xmpp.writeStanza sem . iqError errBR
-    serviceUnavailable = Xmpp.writeStanza sem . iqError errSU
-    notAllowed = Xmpp.writeStanza sem . iqError errNA
-    unexpected = Xmpp.writeStanza sem . iqError errUR
-    conflict   = Xmpp.writeStanza sem . iqError errC
+    badRequest = out . iqError errBR
+    serviceUnavailable = out . iqError errSU
+    notAllowed = out . iqError errNA
+    unexpected = out . iqError errUR
+    conflict   = out . iqError errC
     iqError err (Xmpp.IQRequest iqid from _to lang _tp bd) =
         Xmpp.IQErrorS $ Xmpp.IQError iqid Nothing from lang err (Just bd)
     errBR = Xmpp.StanzaError Xmpp.Modify Xmpp.BadRequest Nothing Nothing
@@ -240,52 +231,76 @@ handleE2E policy cfg sem sta = do
     errNA = Xmpp.StanzaError Xmpp.Cancel Xmpp.NotAllowed Nothing Nothing
     errUR = Xmpp.StanzaError Xmpp.Modify Xmpp.UnexpectedRequest Nothing Nothing
     errC  = Xmpp.StanzaError Xmpp.Cancel Xmpp.Conflict Nothing Nothing
-    result (Xmpp.IQRequest iqid from _to lang _tp _bd) e = Xmpp.writeStanza sem
+    result (Xmpp.IQRequest iqid from _to lang _tp _bd) e = out
                 . Xmpp.IQResultS $ Xmpp.IQResult iqid Nothing from lang e
 
-
 e2eInit :: E2EGlobals
+        -> (Jid -> IO (Maybe Bool))
         -> (Maybe BS.ByteString -> IO BS.ByteString)
-        -> IO E2EConfig
-e2eInit globals sGen  = do
+        -> IO (E2EContext, Plugin)
+e2eInit globals policy sGen = do
+    sessRef <- newTVarIO Nothing
     peers <- newTMVarIO Map.empty
-    return $ E2ECfg peers globals sGen
+    let sess = E2EContext peers sessRef globals sGen
+    let plugin out = do
+            return Xmpp.Plugin' { Xmpp.inHandler = handleE2E policy sess out
+                                , Xmpp.outHandler = sendE2EMsg sess out
+                                , Xmpp.onSessionUp = \sess ->
+                                atomically $ writeTVar sessRef $ Just sess
+                                }
+    return (sess, plugin)
+
+
 
 -- | Start an E2E session with peer. This may block indefinitly (because the
 -- other side may have to ask the user whether to accept the session). So it
 -- can be necessary to run this in another thread or add a timeout.
-startE2E :: Xmpp.Jid
-         -> E2EConfig
-         -> (MsgState -> IO ())
-         -> Xmpp.Session
-         -> IO ()
-startE2E to sessions onSS xmppSession = do
-    s <- withTMVar (peers sessions) $ \sess -> do
+startE2E :: MonadIO m =>
+            Jid
+            -> E2EContext
+            -> (MsgState -> IO ())
+            -> m Bool
+startE2E to ctx onSS = maybe (return False) return =<< (runMaybeT $ do
+    mbSess <- liftIO . atomically . readTVar $ sessRef ctx
+    xmppSession <- case mbSess of
+        Nothing -> mzero
+        Just s -> return s
+    s <- liftIO . withTMVar (peers ctx) $ \sess -> do
         case Map.lookup to sess of
             --Xmpp.sendIQ
             Nothing -> return ()
 
             Just s -> doEndSession to xmppSession
-        s <- newSession (globals sessions) (getSecret sessions) onSS
+        s <- newSession (globals ctx) (getSecret ctx) onSS
                     (\_ -> return ()) (\_ -> return ())
         let sess' = Map.insert to s sess
         return (sess', s)
-    Right ([E2EAkeMessage msg1], st, smp) <- startAke s initiator
-    res <- runMaybeT $ do
-        Just msg2 <- step s msg1
-        Nothing <- step s msg2
-        return ()
-    case res of
-        Nothing -> do
-            doEndSession to xmppSession
-            withTMVar (peers sessions) $ \s -> return (Map.delete to s, ())
-            onSS MsgStatePlaintext
-        Just _ -> return ()
+    liftIO . Ex.handle (\e -> do -- handle asyncronous exceptions
+                    doEndSession to xmppSession
+                    withTMVar (peers ctx) $
+                        \s -> return (Map.delete to s, ())
+                    onSS MsgStatePlaintext
+                    Ex.throw (e :: SomeException)
+              ) $ do
+        Right ([E2EAkeMessage msg1], st, smp) <- startAke s initiator
+        res <- runMaybeT $ do
+            Just msg2 <- step s msg1 xmppSession
+            Nothing <- step s msg2 xmppSession
+            return ()
+        case res of
+            Nothing -> do
+                doEndSession to xmppSession
+                withTMVar (peers ctx) $ \s -> return (Map.delete to s, ())
+                onSS MsgStatePlaintext
+                return False
+            Just _ -> return True
+    )
   where
     step :: E2ESession CRandom.SystemRNG
             -> E2EAkeMessage
+            -> Xmpp.Session
             -> MaybeT IO (Maybe E2EAkeMessage)
-    step s msg = do
+    step s msg xmppSession = do
         Just answer' <- liftIO $ Xmpp.sendIQ Nothing (Just to) Xmpp.Set Nothing
                      (pickle (xpRoot akeMessageXml) msg) xmppSession
         answer <- liftIO . atomically $ takeTMVar answer'
@@ -324,16 +339,32 @@ doEndSession to xmppSession = do
                                  } xmppSession
     return ()
 
-sendE2EMsg cfg to sta xmppSession = do
-    ps <- atomically $ readTMVar (peers cfg)
-    case Map.lookup to ps of
-        Nothing -> return False
+sendE2EMsg ctx out sta = maybe (return True) return =<< ( runMaybeT $ do
+    to' <- case view to sta of
+        Nothing -> liftIO (out sta) >> mzero
+        Just t -> return t
+    case sta of
+        IQRequestS iqr -> if finde2e iqr
+                          then liftIO (out sta) >> mzero
+                          else return ()
+        _ -> return ()
+    ps <- liftIO . atomically $ readTMVar (peers ctx)
+    liftIO $ case Map.lookup to' ps of
+        Nothing -> out sta
         Just p -> do
             res <- sendDataMessage (renderStanza sta) p
             case res of
                 Right ([E2EDataMessage msg], _, _) -> do
                     let xml = pickle dataMessageXml msg
-                    Xmpp.sendMessage Xmpp.message{ Xmpp.messageTo = Just to
-                                                 , Xmpp.messagePayload = xml
-                                                 } xmppSession
-                _ -> return False
+                    out  . Xmpp.MessageS $
+                            Xmpp.message{ Xmpp.messageTo = Just to'
+                                        , Xmpp.messagePayload = xml
+                                        }
+                Left e -> do
+                    errorM "Pontarius.Xmpp.E2E" $
+                           "Error while encrypting stanza: " ++ show e
+                    return False
+    )
+  where
+    finde2e IQRequest{iqRequestPayload = iqrp} =
+        ((== Just e2eNs) . nameNamespace  . elementName) iqrp
