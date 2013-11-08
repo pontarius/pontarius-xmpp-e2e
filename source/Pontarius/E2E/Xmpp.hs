@@ -343,10 +343,17 @@ sendE2EMsg ctx out sta = maybe (return True) return =<< ( runMaybeT $ do
     to' <- case view to sta of
         Nothing -> liftIO (out sta) >> mzero
         Just t -> return t
+    -- Hack, TODO: start E2E uses the normal, user-side IQ facilities. In order
+    -- to allow the AKE to proceed we need to protect E2E stanzas from being
+    -- handled here. The right way to do it would be to do all this on the
+    -- plugin-level.
     case sta of
-        IQRequestS iqr -> if finde2e iqr
+        IQRequestS iqr -> if isE2E $ iqRequestPayload iqr
                           then liftIO (out sta) >> mzero
                           else return ()
+        MessageS msg -> case find isE2E $ messagePayload msg of
+            Just _ -> liftIO (out sta) >> mzero
+            Nothing -> return ()
         _ -> return ()
     ps <- liftIO . atomically $ readTMVar (peers ctx)
     liftIO $ case Map.lookup to' ps of
@@ -366,5 +373,4 @@ sendE2EMsg ctx out sta = maybe (return True) return =<< ( runMaybeT $ do
                     return False
     )
   where
-    finde2e IQRequest{iqRequestPayload = iqrp} =
-        ((== Just e2eNs) . nameNamespace  . elementName) iqrp
+    isE2E e = ((== Just e2eNs) . nameNamespace  . elementName) e
