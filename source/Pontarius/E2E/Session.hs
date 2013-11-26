@@ -1,3 +1,4 @@
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE RecordWildCards #-}
 module Pontarius.E2E.Session
        ( newSession
@@ -17,11 +18,12 @@ import           Control.Applicative((<$>))
 import           Control.Concurrent hiding (yield)
 import qualified Control.Exception as Ex
 import           Control.Monad
+import           Control.Monad.Error
 import           Control.Monad.Identity (runIdentity)
 import           Control.Monad.Reader (runReaderT)
 import qualified Crypto.Random as CRandom
 import qualified Data.ByteString as BS
-import Data.Maybe (listToMaybe)
+import           Data.Maybe (listToMaybe)
 
 import           Pontarius.E2E.Monad
 import           Pontarius.E2E.Types
@@ -37,9 +39,11 @@ data E2ESession g = E2ESession { e2eGlobals :: E2EGlobals
                                , onSendMessage :: E2EMessage -> IO ()
                                , onStateChange :: MsgState -> IO ()
                                , onSmpAuthChange :: Bool -> IO ()
+                               , getKey :: Fingerprint -> IO (Maybe Pubkey)
                                }
 
--- | Run a computation, accumulating all output until it expects more input ends.
+-- | Run a computation, accumulating all output until it expects more input or
+-- the computation is done
 runMessaging :: RunState g
              -> Either E2EError ( Either (RunState g) (E2EState, g)
                                 , [BS.ByteString]
@@ -59,6 +63,7 @@ runMessaging = go id id Nothing Nothing
     go ys os s a (Yield y f) = go (ys . (y:)) os s a f
     go ys os s a (SendMessage outMsg f) = go ys (os . (outMsg:)) s a f
     go ys os s a rc@(RecvMessage{}) = Right (Left rc , ys [], os [], s, a)
+    go ys os s a gp@(GetPubkey{}) = Right (Left gp , ys [], os [], s, a)
     go ys os s a as@(AskSmpSecret{}) = Right (Left as , ys [], os [], s, a)
     go ys os _s a (StateChange st f) = go ys os (Just st) a f
     go ys os s _a (SmpAuthenticated auth f) = go ys os s (Just auth) f
@@ -68,8 +73,9 @@ newSession :: E2EGlobals
            -> (MsgState -> IO ())
            -> (Bool -> IO ())
            -> (E2EMessage -> IO ())
+           -> (Fingerprint -> IO (Maybe Pubkey))
            -> IO (E2ESession CRandom.SystemRNG)
-newSession globals sGen oss osmp sm = do
+newSession globals sGen oss osmp sm gk = do
     g <- CRandom.cprgCreate <$> CRandom.createEntropyPool :: IO CRandom.SystemRNG
     let (st, g') = runIdentity $ runRandT g $ runReaderT  newState globals
     s <- newMVar $ Right (st, g')
@@ -79,6 +85,7 @@ newSession globals sGen oss osmp sm = do
                      , onSendMessage   = sm
                      , onStateChange   = oss
                      , onSmpAuthChange = osmp
+                     , getKey          = gk
                      }
 
 withSession :: E2ESession g
@@ -142,7 +149,7 @@ takeAkeMessage :: CRandom.CPRG g =>
                   -> IO (Either E2EError (Maybe E2EAkeMessage))
 takeAkeMessage sess msg  = do
     res <- takeMessage sess $ E2EAkeMessage msg
-    case res of
+    case fst <$> res of
         Left e -> return $ Left e
         Right (_,_:_)   -> error "AKE yielded payload"
         Right (_:_,_:_) -> error "Too many response messages"
@@ -153,27 +160,31 @@ takeAkeMessage sess msg  = do
 takeDataMessage :: CRandom.CPRG g =>
                    E2ESession g
                    -> DataMessage
-                   -> IO (Either E2EError BS.ByteString)
+                   -> IO (Either E2EError (BS.ByteString, BS.ByteString))
 takeDataMessage sess msg = do
     res <- takeMessage sess $ E2EDataMessage msg
     case res of
         Left e -> return $ Left e
-        Right (_:_,_:_) -> error "decrypt yielded response message"
-        Right ([], [])   -> error "Data message didn't yield"
-        Right ([], (_:_:_)) -> error "Too many yields"
-        Right ([], [y])   -> return $ Right y
+        Right ((_:_, _:_    ), _      ) -> error "decrypt yielded response message"
+        Right (([] , []     ), _      ) -> error "Data message didn't yield"
+        Right (([] , (_:_:_)), _      ) -> error "Too many yields"
+        Right ((_  , _      ), Nothing) -> error "No ssid saved"
+        Right (([] , [y]    ), Just s ) -> return $ Right (y, s)
 
 takeMessage :: CRandom.CPRG g
             => E2ESession g
             -> E2EMessage
-            -> IO (Either E2EError ([E2EMessage], [BS.ByteString]))
-takeMessage (E2ESession globals s _sGen sm oss osmp) msg =
+            -> IO (Either E2EError ( ( [E2EMessage]
+                                     , [BS.ByteString])
+                                   , Maybe BS.ByteString))
+takeMessage (E2ESession globals s _sGen sm oss osmp gpk) msg =
     Ex.bracketOnError (takeMVar s)
                       (putMVar s) $ \rs -> do
     let r = case rs of
             -- There's no suspended computation, so we can start a new one
             Right (st, g) -> case msg of
-                E2EDataMessage msg' -> runE2E globals st g $ handleDataMessage msg'
+                E2EDataMessage msg' -> runE2E globals st g
+                                         $ handleDataMessage msg'
                 _ -> error "not yet implemented" -- TODO
             -- We have a suspended computation that expects a message, so we pass it the message
             Left (RecvMessage rcm) -> rcm msg
@@ -185,10 +196,12 @@ takeMessage (E2ESession globals s _sGen sm oss osmp) msg =
             -- We have a suspended computation that has ended. This should not
             -- happen since finished computations are replaced with returned state
             Left Return{} -> error "Inconsistent state, takeMessagecalled with Yield "
+            Left s -> error $ "unexpected state: " ++ show (void s)
 --            Left AskSmpSecret{} -> error $ "Inconsistent state, takeMessagecalled with Yield "
-    go [] [] r rs
+    let s = either (const Nothing) (ssid . fst) rs
+    fmap (, s) <$> go [] [] r rs
   where
-    go _ys _os r rs = case runMessaging r of
+    go ys os r rs = case runMessaging r of
         Left e -> do
             putMVar s rs
             return $ Left e
@@ -197,15 +210,22 @@ takeMessage (E2ESession globals s _sGen sm oss osmp) msg =
         --     go (ys' ++ ys) (os' ++ os) (r' s) rs
         Right (Left (AskSmpSecret _ _),  _, _, _, _) ->
             error "state change before secret"
+        Right (rs'@(Left (GetPubkey fp g)), ys', os', ss, a)  -> do
+                mbpk <- gpk fp
+                case mbpk of
+                    Just pk -> go (ys ++ ys') (os ++ os') (g pk) rs'
+                    Nothing -> do
+                        putMVar s rs'
+                        return $ Left NoPubkey
         Right (rs', ys, os@(_:_:_), ss, a) -> error $
                                               "Too many answer messages"
                                               ++ show os
-        Right (rs', ys, os, ss, a) -> do
+        Right (rs', ys', os', ss, a) -> do
             putMVar s rs'
-            forM_ os sm
+            forM_ (os ++ os') sm
             maybe (return ()) oss ss
             maybe (return ()) osmp a
-            return $ Right (os,ys)
+            return $ Right (os++os',ys++ys')
 
 
 initiator :: CRandom.CPRG g => E2E g ()

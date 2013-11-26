@@ -169,3 +169,6 @@ withNewState :: CRandom.CPRG g => E2EGlobals
 withNewState globals g side = do
     let (st, g') = runIdentity $ runRandT g $ runReaderT newState globals
     runE2E globals st g' side
+
+pubkeyFingerprint :: E2EParameters -> DSA.PublicKey -> BS.ByteString
+pubkeyFingerprint params = paramHash params . encodePubkey

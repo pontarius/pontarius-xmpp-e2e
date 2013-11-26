@@ -8,6 +8,7 @@ module Pontarius.E2E
        , alice
        , bob
        , e2eDefaultParameters
+       , pubkeyFingerprint
        )
 
        where
@@ -48,4 +49,5 @@ e2eDefaultParameters = E2EParameters { paramDHPrime = e2eDefaultPrime
                                      , paramHash = SHA256.hash
                                      , paramMac = HMAC.hmac SHA256.hash (512 `div` 8)
                                      , paramCheckMac = e2eDefaultCheckMac
+                                     , sendPubkey = False
                                      }

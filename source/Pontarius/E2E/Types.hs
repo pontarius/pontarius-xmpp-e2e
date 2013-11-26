@@ -9,10 +9,11 @@ import qualified Crypto.PubKey.DSA as DSA
 import qualified Data.ByteString as BS
 import           Data.Typeable (Typeable)
 
-
 type CTR = BS.ByteString
 type MAC = BS.ByteString
 type DATA = BS.ByteString
+
+type Pubkey = DSA.PublicKey
 
 data DHKeyPair = DHKeyPair { pub  :: !Integer
                            , priv :: !Integer
@@ -44,6 +45,7 @@ data E2EError = WrongState String
               | RandomGenError CR.GenError
               | InstanceTagRange
               | NoPeerDHKey -- theirCurrentKey is Nothing
+              | NoPubkey -- We don't know the pubkey with the give fingerprint
               | ProtocolError ProtocolError String -- One of the checks failed
                 deriving (Show, Eq, Typeable)
 
@@ -173,6 +175,7 @@ data E2EParameters = E2EParameters { paramDHPrime :: !Integer
                                                    -> BS.ByteString -- ^ payload
                                                    -> BS.ByteString -- ^ MAC
                                                    -> Bool
+                                   , sendPubkey :: Bool
                                    }
 
 type DSAKeyPair = (DSA.PublicKey, DSA.PrivateKey)
@@ -181,7 +184,12 @@ data E2EGlobals = E2EG { parameters :: !E2EParameters
                        , dsaKeyPair :: !DSAKeyPair
                        }
 
-data SignatureData = SD { sdPub   :: !DSA.PublicKey
+data KeyType = KeyTypeDSA | KeyTypeRSA -- ECDSA
+                            deriving (Show, Read, Eq, Ord)
+
+type Fingerprint = (KeyType, BS.ByteString)
+
+data SignatureData = SD { sdPub   ::  !(Either DSA.PublicKey Fingerprint)
                         , sdKeyID :: !Integer
                         , sdSig   :: !DSA.Signature
                         } deriving (Eq, Show)
@@ -197,6 +205,7 @@ data E2EMessage = E2EAkeMessage {unE2EAkeMessage ::  !E2EAkeMessage}
 
 data Messaging a = SendMessage !E2EMessage (Messaging a)
                  | RecvMessage (E2EMessage -> Messaging a)
+                 | GetPubkey Fingerprint (DSA.PublicKey -> Messaging a)
                  | Yield !BS.ByteString (Messaging a)
                  | AskSmpSecret !(Maybe BS.ByteString)
                                 (BS.ByteString -> Messaging a)
@@ -209,6 +218,7 @@ data Messaging a = SendMessage !E2EMessage (Messaging a)
 instance Show a => Show (Messaging a) where
     show (SendMessage msg f) = "SendMessage{" ++ show msg ++ "}> " ++ show f
     show (RecvMessage _) = "RecvMsg(...)"
+    show (GetPubkey fp _) = "GetPubkey{" ++ show fp ++ "}(...)"
     show (Yield y f) = "Yield{" ++ show y ++ "}> " ++ show f
     show (AskSmpSecret q _) = "AskSmpSecret{" ++ show q ++ "}(..)"
     show (StateChange st f) = "StateChange{" ++ show st ++ "}> " ++ show f

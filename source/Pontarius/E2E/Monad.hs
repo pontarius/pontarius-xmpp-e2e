@@ -17,6 +17,7 @@ import                           Control.Monad.Error
 import                           Control.Monad.Reader
 import                           Control.Monad.State.Strict
 import                           Control.Monad.Trans.State.Strict (liftCatch)
+import qualified                 Crypto.PubKey.DSA as DSA
 import qualified "crypto-random" Crypto.Random as CRandom
 import qualified                 Data.ByteString as BS
 import                           Pontarius.E2E.Types
@@ -79,8 +80,9 @@ instance Monad Messaging  where
     return = Return
     Return a >>= f = f a
     SendMessage msg g >>= f = SendMessage msg (g >>= f)
+    GetPubkey fp g >>= f = GetPubkey fp (g >=> f)
     Yield pl f >>= g = Yield pl (f >>= g)
-    RecvMessage g >>= f = RecvMessage (\msg -> g msg >>= f)
+    RecvMessage g >>= f = RecvMessage ( g >=> f)
     AskSmpSecret q g >>= f = AskSmpSecret q (g  >=> f)
     SmpAuthenticated a g >>= f = SmpAuthenticated a (g >>= f)
     StateChange s g >>= f = StateChange s (g >>= f)
@@ -96,3 +98,6 @@ recvMessage = lift . lift . lift . lift $ RecvMessage return
 
 sendMessage :: E2EMessage -> E2E g ()
 sendMessage msg = lift . lift . lift . lift $ SendMessage msg (return ())
+
+getPubkey :: Fingerprint -> E2E g DSA.PublicKey
+getPubkey fp = lift . lift . lift . lift $ GetPubkey fp return

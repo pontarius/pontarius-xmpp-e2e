@@ -33,7 +33,11 @@ import           Network.Xmpp.Types (Stanza)
 import           Network.Xmpp.Utilities (renderElement)
 import           Pontarius.E2E.Types
 import           Text.XML.Stream.Parse
+import Data.Traversable (traverse)
 
+
+-- Binary encodings
+------------------------------
 
 -- | Will be [] for x <= 0
 unrollInteger :: Integer -> [Word8]
@@ -63,6 +67,12 @@ b64ToInt b64 = do
     Right bs <- return . B64.decode . Text.encodeUtf8 $ b64
     return . decodeInteger $ bs
 
+bsToB64 :: BS8.ByteString -> Text
+bsToB64 = Text.decodeUtf8 . B64.encode
+
+b64ToBS :: Text -> Either String BS8.ByteString
+b64ToBS = B64.decode . Text.encodeUtf8
+
 toMPIBuilder i = let bs = unrollInteger i in BSB.word32BE
                                                (fromIntegral $ length bs)
                                              `mappend` (BSB.word8 `foldMap` bs)
@@ -80,6 +90,11 @@ encodeMessageBytes msg = BS.concat . BSL.toChunks . BSB.toLazyByteString $
                            `mappend` BSB.word32BE (fromIntegral . BS.length
                                                      $ messageEnc msg)
                            `mappend` BSB.byteString (messageEnc msg)
+
+encodePubkey :: DSA.PublicKey -> BS8.ByteString
+encodePubkey (DSA.PublicKey (DSA.Params p g q) y) =
+        BS.concat . BSL.toChunks . BSB.toLazyByteString $
+        foldMap toMPIBuilder [p, q, g, y]
 --------------------------------------
 -- JSON ------------------------------
 --------------------------------------
@@ -111,11 +126,17 @@ signatureToJson (DSA.Signature r s) = object [ "r" .= intToB64 r
                                              , "s" .= intToB64 s
                                              ]
 
+
 instance FromJSON SignatureData where
     parseJSON (Object v) = do
         tp <- v .: "type"
         guard (tp == ("DSA" :: String ))
-        pub <- pubKeyFromJson =<< v .: "pubkey"
+        mbPub <- traverse pubKeyFromJson =<< v .:? "pubkey"
+        pub <- case mbPub of
+            Just p -> return $ Left p
+            Nothing -> do
+                Right fp <- b64ToBS <$> v .: "fingerprint"
+                return $ Right (KeyTypeDSA, fp)
         kid <- v .: "keyID"
         sig <- signatureFromJson =<< v .: "signature"
         return $ SD pub kid sig
@@ -123,7 +144,10 @@ instance FromJSON SignatureData where
 
 instance ToJSON SignatureData where
     toJSON SD{..} = object [ "type" .= ("DSA" :: String)
-                           , "pubkey" .= pubKeyToJson sdPub
+                           , case sdPub of
+                                  Left pub -> "pubkey" .= pubKeyToJson pub
+                                  Right (_keyType, fPrint) ->
+                                      "fingerprint" .= bsToB64 fPrint
                            , "keyID" .= sdKeyID
                            , "signature" .= signatureToJson sdSig
                            ]

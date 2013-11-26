@@ -31,7 +31,7 @@ alice1 = do
     gxBSEnc <- encCtrZero r gxBS
     gxBSHash <- doHash gxBS
     putAuthState $ AuthStateAwaitingDHKey r
-    return DHC{ gxBSEnc = gxBSEnc
+    return DHC{ gxBSEnc  = gxBSEnc
               , gxBSHash = gxBSHash
               }
 
@@ -131,7 +131,6 @@ keyDerivs s = do
              , kdM2'  = h2 0x06
              }
 
-
 mkAuthMessage :: CRandom.CPRG g => AuthKeys -> E2E g SignatureMessage
 mkAuthMessage keyType = do
     DHKeyPair gx x <- gets ourCurrentKey
@@ -160,7 +159,10 @@ checkAndSaveAuthMessage keyType (SM xEncrypted xEncMac) = do
     xEncMac' <- mac macKey2 xEncrypted
     protocolGuard MACFailure "auth message" $ (xEncMac' =~= xEncMac)
     xDec <- decCtrZero cryptKey xEncrypted
-    SD theirPub theirKeyID sig <- jsonDecode xDec
+    SD maybeTheirPub theirKeyID sig <- jsonDecode xDec
+    theirPub <- case maybeTheirPub of
+        Left pk -> return pk
+        Right fp -> getPubkey fp
     theirM <- m gy gx theirPub macKey1
     -- check that the public key they present is the one we have stored (if any)
     storedPubkey <- gets theirPublicKey
@@ -182,10 +184,10 @@ m :: MonadReader E2EGlobals m
 m ours theirs pubKey messageAuthKey = do
     let m' = BS.concat . BSL.toChunks . BSB.toLazyByteString $
              foldMap toMPIBuilder [ ours , theirs]
-             `mappend` encodePubkey pubKey
+             `mappend` encodePubkeyBuilder pubKey
     mac messageAuthKey m'
   where
-    encodePubkey (DSA.PublicKey (DSA.Params p g q) y) =
+    encodePubkeyBuilder (DSA.PublicKey (DSA.Params p g q) y) =
         foldMap toMPIBuilder [p, q, g, y]
 
 
@@ -196,7 +198,11 @@ xs :: DSA.PublicKey
    -> BS.ByteString
    -> E2E g (BS.ByteString, BS.ByteString)
 xs pub kid sig aesKey macKey = do
-    let sd = SD{ sdPub   = pub
+    sP <- parameter sendPubkey
+    pubKeyHash <- hash $ encodePubkey pub
+    let sd = SD{ sdPub   = if sP
+                           then Left pub
+                           else Right (KeyTypeDSA, pubKeyHash)
                , sdKeyID = kid
                , sdSig   = sig
                }

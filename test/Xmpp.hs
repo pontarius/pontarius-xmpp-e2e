@@ -3,11 +3,13 @@
 
 module Main where
 
+import           Control.Applicative ((<$>))
 import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Concurrent.STM
 import           Control.Monad
 import           Control.Monad.Fix
+import qualified Crypto.Types.PubKey.DSA as DSA
 import           Data.Default (def)
 import           Network
 import qualified Network.Xmpp as Xmpp
@@ -20,6 +22,8 @@ import           Pontarius.E2E.Types
 import           Pontarius.E2E.Xmpp
 import           System.IO
 import           System.Log.Logger
+import qualified Data.Map as Map
+import qualified Data.ByteString as BS
 
 realm    = "species64739.dyndns.org"
 username1 = "testuser1"
@@ -35,36 +39,47 @@ policy _ = return $ Just True
 
 (#) = flip id
 
+type Keystore = Map.Map (KeyType, BS.ByteString) DSA.PublicKey
 
+makeKeystore = do
+    keys <- mapM getKey ["keyfile2.pem", "keyfile.pem", "keyfile4096-1.pem"]
+    return $ Map.fromList [ (( KeyTypeDSA
+                             , pubkeyFingerprint e2eDefaultParameters k), k)
+                          | k <- fst <$> keys ]
 
-thread1 :: IO ()
-thread1 = do
+thread1 :: Keystore -> IO ()
+thread1 store = do
     sem <- newEmptyMVar
-    keys <- getKey "keyfile.pem"
+    keys <- getKey "keyfile4096-1.pem"
     let globals = E2EG e2eDefaultParameters keys
     (ctx, plugin) <- e2eInit globals policy (\_ -> return "abc")
+                     ( return . flip Map.lookup store )
     Right sess <- Xmpp.session realm
                  (Just (\_ -> [Xmpp.scramSha1 username1 Nothing password]
                          , resource)) config{Xmpp.plugins = [plugin]}
     forkIO . forever $ do
-        m <- Xmpp.pullMessage sess
+        Right m <- Xmpp.pullMessage sess
         infoM "Pontarius.Xmpp.E2E" $ "received message: " ++ show m
+        infoM "Pontarius.Xmpp.E2E" $ "Message was : " ++ (if wasEncrypted m then "" else "not " ) ++ "encrypted."
         hFlush stdout
 
     forever $ threadDelay 1000000
     return ()
 
-thread2 :: IO ()
-thread2 = do
+thread2 :: Keystore -> IO ()
+thread2 store = do
     sem <- newEmptyMVar
     keys <- getKey "keyfile2.pem"
+    theirPubkey <- fst <$> getKey "keyfile4096-1.pem"
     let globals = E2EG e2eDefaultParameters keys
     sem <- newEmptyTMVarIO
     (ctx, plugin) <- e2eInit globals policy (\_ -> return "abc")
+                     ( return . flip Map.lookup store )
     Right sess <- Xmpp.session realm
              (Just (\_ -> [Xmpp.scramSha1 username2 Nothing password]
                      , resource)) config{Xmpp.plugins = [plugin]}
     let peer = [Xmpp.jidQ|testuser1@species64739.dyndns.org/bot|]
+    Xmpp.sendMessage (Xmpp.simpleIM peer "Unencrypted") sess
     startE2E peer ctx (atomically . putTMVar sem)
     atomically (takeTMVar sem) >>= print
     Xmpp.sendMessage (Xmpp.simpleIM peer "Hello encrypted") sess
@@ -72,7 +87,8 @@ thread2 = do
     return ()
 
 main = do
-    updateGlobalLogger "Pontarius.Xmpp" $ setLevel DEBUG
-    forkIO thread1
-    thread2
+    store <- makeKeystore
+    updateGlobalLogger "Pontarius.Xmpp" $ setLevel INFO
+    forkIO $ thread1 store
+    thread2 store
     threadDelay $ 5*10^6
