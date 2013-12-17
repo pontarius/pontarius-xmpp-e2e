@@ -8,7 +8,7 @@ synopsis:            End to end security for pontarius
 homepage:            https://github.com/pontarius/pontarius-e2e
 Bug-Reports:         https://github.com/pontarius/pontarius-e2e/issues
 license:             Apache-2.0
-license-file:        LICENSE
+license-file:        LICENSE.md
 author:              Philipp Balzarek, Jon Kristensen
 maintainer:          p.balzarek@googlemail.com
 category:            Network
