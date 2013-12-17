@@ -161,19 +161,19 @@ data E2EAkeMessage = DHCommitMessage {unDHCommitMessage :: !DHCommitMessage}
 data E2EParameters = E2EParameters { paramDHPrime :: !Integer
                                    , paramDHGenerator :: !Integer
                                    , paramDHKeySizeBits :: !Integer
-                                   , paramEncrypt :: BS.ByteString -- ^ IV
-                                             -> BS.ByteString -- ^ key
-                                             -> BS.ByteString -- ^ payload
-                                             -> BS.ByteString -- ^ ciphertext
+                                   , paramEncrypt :: BS.ByteString -- IV
+                                                  -> BS.ByteString -- key
+                                                  -> BS.ByteString -- payload
+                                                  -> BS.ByteString -- ciphertext
                                    , paramEncryptionBlockSize :: !Int
                                    , paramEncryptionKeySize :: !Int
                                    , paramHash :: BS.ByteString -> BS.ByteString
-                                   , paramMac  :: BS.ByteString -- ^ macKey
-                                               -> BS.ByteString -- ^ Payload
+                                   , paramMac  :: BS.ByteString -- macKey
+                                               -> BS.ByteString -- Payload
                                                -> BS.ByteString
-                                   , paramCheckMac :: BS.ByteString -- ^ macKey
-                                                   -> BS.ByteString -- ^ payload
-                                                   -> BS.ByteString -- ^ MAC
+                                   , paramCheckMac :: BS.ByteString -- macKey
+                                                   -> BS.ByteString -- payload
+                                                   -> BS.ByteString -- MAC
                                                    -> Bool
                                    , sendPubkey :: Bool
                                    }
