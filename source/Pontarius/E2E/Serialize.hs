@@ -73,6 +73,7 @@ bsToB64 = Text.decodeUtf8 . B64.encode
 b64ToBS :: Text -> Either String BS8.ByteString
 b64ToBS = B64.decode . Text.encodeUtf8
 
+toMPIBuilder :: Integer -> BSB.Builder
 toMPIBuilder i = let bs = unrollInteger i in BSB.word32BE
                                                (fromIntegral $ length bs)
                                              `mappend` (BSB.word8 `foldMap` bs)
@@ -153,6 +154,7 @@ instance ToJSON SignatureData where
                            ]
 
 -- See Issue 142 in AESON: https://github.com/bos/aeson/issues/142
+jsonDecode :: (MonadError E2EError m, FromJSON a) => BS8.ByteString -> m a
 jsonDecode d = case eitherDecode' (BSL.fromChunks [d]) of
     Right x -> return x
     Left e -> throwError $ ProtocolError (DeserializationError $ BS8.unpack d) e
@@ -253,6 +255,7 @@ e2eMessageSelector E2EAkeMessage{} = 0
 e2eMessageSelector E2EDataMessage{} = 1
 e2eMessageSelector E2EEndSessionMessage{} = 2
 
+e2eMessageXml :: PU [Element] E2EMessage
 e2eMessageXml = xpChoice e2eMessageSelector
                 [ xpWrap E2EAkeMessage unE2EAkeMessage akeMessageXml
                 , xpWrap E2EDataMessage unE2EDataMessage dataMessageXml
