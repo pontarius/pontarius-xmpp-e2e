@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Pontarius.E2E.Serialize
@@ -16,7 +17,7 @@ import qualified Data.ByteString.Base64 as B64
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Lazy.Builder as BSB
-import           Data.Conduit (($=),($$), ConduitM, await, yield)
+import           Data.Conduit (($=),($$), ConduitM, await, yield, monadThrow, transPipe)
 import qualified Data.Conduit.List as CL
 import           Data.Foldable (foldMap)
 import           Data.List
@@ -29,12 +30,11 @@ import           Data.XML.Pickle
 import           Data.XML.Types
 import           Network.Xmpp.Marshal (xpStanza)
 import           Network.Xmpp.Stream (elements)
-import           Network.Xmpp.Types (Stanza)
+import           Network.Xmpp.Types (Stanza, XmppFailure)
 import           Network.Xmpp.Utilities (renderElement)
 import           Pontarius.E2E.Types
 import           Text.XML.Stream.Parse
 import Data.Traversable (traverse)
-
 
 -- Binary encodings
 ------------------------------
@@ -293,7 +293,14 @@ readStanzas bs = es >>= mapM (\el -> case unpickle xpStanza' el of
                                    Right r -> Right r
                              )
   where
-    es = case CL.sourceList [bs] $= parseBytes def $= filterOutJunk $= elements
-              $$ CL.consume of
+    es = case CL.sourceList [bs] $= parseBytes def $= filterOutJunk
+              $= liftError elements $$ CL.consume of
         Left e -> Left $ show (e :: SomeException)
         Right r -> Right r
+    liftError :: ConduitM i o (ErrorT XmppFailure (Either SomeException)) r
+              -> ConduitM i o (Either SomeException) r
+    liftError = transPipe$ \f -> do
+        res <- runErrorT f
+        case res of
+            Left e -> monadThrow e
+            Right r -> return r
