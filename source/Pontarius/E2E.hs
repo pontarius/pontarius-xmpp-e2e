@@ -2,12 +2,23 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE RecordWildCards #-}
 module Pontarius.E2E
-       ( newSession
+       ( -- * End-user API
+         newSession
+       , DSAKeyPair(..)
+       , E2EContext
+       , E2EGlobals(..)
+       , E2EMessage(..)
+       , E2EParameters(..)
+       , E2ESession
+       , Fingerprint
+       , KeyType(..)
+       , MsgState(..)
+       , e2eDefaultParameters
+         -- * Development helpers
        , takeAkeMessage
        , takeDataMessage
        , alice
        , bob
-       , e2eDefaultParameters
        , pubkeyFingerprint
        )
 

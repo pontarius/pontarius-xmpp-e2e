@@ -58,15 +58,6 @@ withTMVar mv f = Ex.bracketOnError (atomically $ takeTMVar mv)
                                        atomically $ putTMVar mv v'
                                        return a
 
-data E2EContext = E2EContext { peers :: TMVar (Map.Map Xmpp.Jid
-                                                 (E2ESession CRandom.SystemRNG))
-                             , sessRef :: TVar (Maybe Xmpp.Session)
-                             , globals :: E2EGlobals
-                             , getSecret :: Maybe BS.ByteString
-                                             -> IO BS.ByteString
-                             , getPKey :: Fingerprint -> IO (Maybe Pubkey)
-                             }
-
 data E2EAnnotation = E2EA { ssidA :: BS.ByteString -- ^ Session ID of the
                           } deriving (Show, Typeable)
 

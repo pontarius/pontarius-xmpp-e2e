@@ -8,6 +8,12 @@ import           Control.Monad.Error
 import qualified Crypto.PubKey.DSA as DSA
 import qualified Data.ByteString as BS
 import           Data.Typeable (Typeable)
+import           Control.Concurrent
+import           Control.Concurrent.STM
+import qualified Data.Map as Map
+import           Network.Xmpp.Types as Xmpp
+import qualified Crypto.Random as CRandom
+import qualified Network.Xmpp as Xmpp
 
 type CTR = BS.ByteString
 type MAC = BS.ByteString
@@ -230,3 +236,23 @@ instance Show a => Show (Messaging a) where
 type DSAKeys = (DSA.PublicKey, DSA.PrivateKey)
 
 type RunState g = Messaging ((Either E2EError (), E2EState), g)
+
+data E2EContext = E2EContext { peers :: TMVar (Map.Map Xmpp.Jid
+                                                 (E2ESession CRandom.SystemRNG))
+                             , sessRef :: TVar (Maybe Xmpp.Session)
+                             , globals :: E2EGlobals
+                             , getCtxSecret :: Maybe BS.ByteString
+                                            -> IO BS.ByteString
+                             , getPKey :: Fingerprint -> IO (Maybe Pubkey)
+                             }
+
+data E2ESession g = E2ESession { e2eGlobals :: E2EGlobals
+                               , e2eState :: MVar (Either (RunState g)
+                                                  (E2EState, g))
+                               , getSessSecret :: Maybe BS.ByteString
+                                               -> IO BS.ByteString
+                               , onSendMessage :: E2EMessage -> IO ()
+                               , onStateChange :: MsgState -> IO ()
+                               , onSmpAuthChange :: Bool -> IO ()
+                               , getKey :: Fingerprint -> IO (Maybe Pubkey)
+                               }

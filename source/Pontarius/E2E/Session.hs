@@ -31,17 +31,6 @@ import           Pontarius.E2E.Helpers
 import           Pontarius.E2E.Message
 import           Pontarius.E2E.AKE (alice, bob)
 
-data E2ESession g = E2ESession { e2eGlobals :: E2EGlobals
-                               , e2eState :: MVar (Either (RunState g)
-                                                  (E2EState, g))
-                               , getSecret :: Maybe BS.ByteString
-                                              -> IO BS.ByteString
-                               , onSendMessage :: E2EMessage -> IO ()
-                               , onStateChange :: MsgState -> IO ()
-                               , onSmpAuthChange :: Bool -> IO ()
-                               , getKey :: Fingerprint -> IO (Maybe Pubkey)
-                               }
-
 -- | Run a computation, accumulating all output until it expects more input or
 -- the computation is done
 runMessaging :: RunState g
@@ -81,7 +70,7 @@ newSession globals sGen oss osmp sm gk = do
     s <- newMVar $ Right (st, g')
     return E2ESession{ e2eGlobals      = globals
                      , e2eState        = s
-                     , getSecret       = sGen
+                     , getSessSecret   = sGen
                      , onSendMessage   = sm
                      , onStateChange   = oss
                      , onSmpAuthChange = osmp
