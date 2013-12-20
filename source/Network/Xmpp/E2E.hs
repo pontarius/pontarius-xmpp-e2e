@@ -4,7 +4,14 @@
 -- We can't block during stanza handling, so we can't run the policy action in
 -- there.
 
-module Pontarius.E2E.Xmpp  where
+module Network.Xmpp.E2E ( e2eInit
+                        , startE2E
+                        , doEndSession
+                        , sendE2EMsg
+                        , getSsid
+                        , wasEncrypted
+                        , Network.Xmpp.E2E.getKey
+                        ) where
 
 import           Control.Applicative ((<$>))
 import           Control.Concurrent
@@ -191,7 +198,7 @@ handleE2E policy sess out sta as = do
 
 
     startSession iqr from m = do
-        s <- newSession (globals sess) (getSecret sess)
+        s <- newSession (globals sess) (getCtxSecret sess)
                                (\_ -> return ()) (\_ -> return ()) (\_ -> return ()) (getPKey sess)
         startAke s responder
         res <- takeAkeMessage s m
@@ -266,7 +273,7 @@ startE2E to ctx onSS = maybe (return False) return =<< (runMaybeT $ do
             Nothing -> return ()
 
             Just s -> doEndSession to xmppSession
-        s <- newSession (globals ctx) (getSecret ctx) onSS
+        s <- newSession (globals ctx) (getCtxSecret ctx) onSS
                     (\_ -> return ()) (\_ -> return ()) (getPKey ctx)
         let sess' = Map.insert to s sess
         return (sess', s)
@@ -296,9 +303,9 @@ startE2E to ctx onSS = maybe (return False) return =<< (runMaybeT $ do
             -> Xmpp.Session
             -> MaybeT IO (Maybe E2EAkeMessage)
     step s msg xmppSession = do
-        Right (answer, _) <- liftIO $ Xmpp.sendIQ' Nothing (Just to) Xmpp.Set
-                                      Nothing (pickle (xpRoot akeMessageXml) msg)
-                                      xmppSession
+        Right answer <- liftIO $ Xmpp.sendIQ' Nothing (Just to) Xmpp.Set
+                                     Nothing (pickle (xpRoot akeMessageXml) msg)
+                                     xmppSession
         iqr <- case answer of
             IQResponseResult r -> return r
             IQResponseError e -> do
@@ -331,7 +338,7 @@ doEndSession to xmppSession = do
                                  } xmppSession
     return ()
 
-sendE2EMsg ctx out sta = maybe (return True) return =<< ( runMaybeT $ do
+sendE2EMsg ctx out sta = maybe (return $ Right ()) return =<< ( runMaybeT $ do
     to' <- case view to sta of
         Nothing -> liftIO (out sta) >> mzero
         Just t -> return t
@@ -359,10 +366,11 @@ sendE2EMsg ctx out sta = maybe (return True) return =<< ( runMaybeT $ do
                             Xmpp.message{ Xmpp.messageTo = Just to'
                                         , Xmpp.messagePayload = xml
                                         }
+                    return $ Right ()
                 Left e -> do
                     errorM "Pontarius.Xmpp.E2E" $
                            "Error while encrypting stanza: " ++ show e
-                    return False
+                    return $ Left Xmpp.XmppOtherFailure
     )
   where
     isE2E e = ((== Just e2eNs) . nameNamespace  . elementName) e

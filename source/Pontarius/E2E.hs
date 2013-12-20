@@ -4,7 +4,7 @@
 module Pontarius.E2E
        ( -- * End-user API
          newSession
-       , DSAKeyPair(..)
+       , DSAKeyPair
        , E2EContext
        , E2EGlobals(..)
        , E2EMessage(..)

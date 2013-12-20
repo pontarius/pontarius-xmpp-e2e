@@ -17,8 +17,9 @@ cabal-version:       >=1.8
 
 library
   hs-source-dirs:      source
-  exposed-modules:     Pontarius.E2E
-  other-modules:       Pontarius.E2E.Monad
+  exposed-modules:     Network.Xmpp.E2E
+  other-modules:       Pontarius.E2E
+                     , Pontarius.E2E.Monad
                      , Pontarius.E2E.Serialize
                      , Pontarius.E2E.Helpers
                      , Pontarius.E2E.AKE
