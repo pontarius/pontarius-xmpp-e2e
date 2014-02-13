@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
 module Pontarius.E2E.Serialize
 where
 
@@ -21,7 +22,7 @@ import           Data.Conduit (($=),($$), ConduitM, await, yield, monadThrow, tr
 import qualified Data.Conduit.List as CL
 import           Data.Foldable (foldMap)
 import           Data.List
-import           Data.Monoid(mappend)
+import           Data.Monoid
 import           Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
@@ -34,7 +35,6 @@ import           Network.Xmpp.Types (Stanza, XmppFailure)
 import           Network.Xmpp.Utilities (renderElement)
 import           Pontarius.E2E.Types
 import           Text.XML.Stream.Parse
-import Data.Traversable (traverse)
 
 -- Binary encodings
 ------------------------------
@@ -76,7 +76,7 @@ b64ToBS = B64.decode . Text.encodeUtf8
 toMPIBuilder :: Integer -> BSB.Builder
 toMPIBuilder i = let bs = unrollInteger i in BSB.word32BE
                                                (fromIntegral $ length bs)
-                                             `mappend` (BSB.word8 `foldMap` bs)
+                                             <> (BSB.word8 `foldMap` bs)
 
 -- | Encode data message for MAC
 encodeMessageBytes :: DataMessage -> BS.ByteString
@@ -85,17 +85,19 @@ encodeMessageBytes msg = BS.concat . BSL.toChunks . BSB.toLazyByteString $
                                                 , recipientKeyID msg
                                                 , nextDHy msg
                                                 ]
-                           `mappend` BSB.word32BE (fromIntegral . BS.length
+                           <> BSB.word32BE (fromIntegral . BS.length
                                                      $ ctrHi msg)
-                           `mappend` BSB.byteString (ctrHi msg)
-                           `mappend` BSB.word32BE (fromIntegral . BS.length
+                           <> BSB.byteString (ctrHi msg)
+                           <> BSB.word32BE (fromIntegral . BS.length
                                                      $ messageEnc msg)
-                           `mappend` BSB.byteString (messageEnc msg)
+                           <> BSB.byteString (messageEnc msg)
 
-encodePubkey :: DSA.PublicKey -> BS8.ByteString
-encodePubkey (DSA.PublicKey (DSA.Params p g q) y) =
-        BS.concat . BSL.toChunks . BSB.toLazyByteString $
-        foldMap toMPIBuilder [p, q, g, y]
+encodePubkey :: PubKey -> BSB.Builder
+encodePubkey (PubKey tp fprint) =
+    BSB.word32BE (fromIntegral $ BS.length tp)
+    <> BSB.byteString tp
+    <> BSB.byteString fprint
+
 --------------------------------------
 -- JSON ------------------------------
 --------------------------------------
@@ -116,41 +118,30 @@ pubKeyToJson (DSA.PublicKey (DSA.Params p g q) y)  = object [ "p" .=  intToB64 p
                                                             , "y" .=  intToB64 y
                                                             ]
 
-signatureFromJson :: Value -> Parser DSA.Signature
-signatureFromJson = withObject "DSA SIgnature" dsaSFJ
-  where
-    dsaSFJ o = DSA.Signature <$> (b64ToInt =<< o .: "r")
-                             <*> (b64ToInt =<< o .: "s")
-
-signatureToJson :: DSA.Signature -> Value
-signatureToJson (DSA.Signature r s) = object [ "r" .= intToB64 r
-                                             , "s" .= intToB64 s
-                                             ]
-
-
 instance FromJSON SignatureData where
     parseJSON (Object v) = do
-        tp <- v .: "type"
-        guard (tp == ("DSA" :: String ))
-        mbPub <- traverse pubKeyFromJson =<< v .:? "pubkey"
-        pub <- case mbPub of
-            Just p -> return $ Left p
-            Nothing -> do
-                Right fp <- b64ToBS <$> v .: "fingerprint"
-                return $ Right (KeyTypeDSA, fp)
+        pubID <- pubKeyIDfromJSON =<< v .: "pubkey"
         kid <- v .: "keyID"
-        sig <- signatureFromJson =<< v .: "signature"
-        return $ SD pub kid sig
+        sig <- v .: "signature"
+        return $ SD pubID kid sig
     parseJSON _ = mzero
 
+pubKeytoJSON :: PubKey -> Value
+pubKeytoJSON (PubKey tp fprint) = object [ "type" .= tp
+                                         , "fingerprint" .= fprint
+                                         ]
+
+pubKeyIDfromJSON :: Value -> Parser PubKey
+pubKeyIDfromJSON (Object v) = do
+    tpString <- v .: "type"
+    fprint <- v   .: "id"
+    return $ PubKey tpString fprint
+pubKeyIDfromJSON _ = mzero
+
 instance ToJSON SignatureData where
-    toJSON SD{..} = object [ "type" .= ("DSA" :: String)
-                           , case sdPub of
-                                  Left pub -> "pubkey" .= pubKeyToJson pub
-                                  Right (_keyType, fPrint) ->
-                                      "fingerprint" .= bsToB64 fPrint
-                           , "keyID" .= sdKeyID
-                           , "signature" .= signatureToJson sdSig
+    toJSON SD{..} = object [ "pubkey"    .= pubKeytoJSON sdPubKey
+                           , "keyID"     .= sdKeyID
+                           , "signature" .= sdSig
                            ]
 
 -- See Issue 142 in AESON: https://github.com/bos/aeson/issues/142

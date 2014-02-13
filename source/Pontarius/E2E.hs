@@ -1,28 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE RecordWildCards #-}
-module Pontarius.E2E
-       ( -- * End-user API
-         newSession
-       , DSAKeyPair
-       , E2EContext
-       , E2EGlobals(..)
-       , E2EMessage(..)
-       , E2EParameters(..)
-       , E2ESession
-       , Fingerprint
-       , KeyType(..)
-       , MsgState(..)
-       , e2eDefaultParameters
-         -- * Development helpers
-       , takeAkeMessage
-       , takeDataMessage
-       , alice
-       , bob
-       , pubkeyFingerprint
-       )
-
-       where
+module Pontarius.E2E where
 
 import qualified Crypto.Cipher.AES as AES
 import qualified Crypto.Hash.SHA256 as SHA256 (hash)
@@ -60,5 +39,4 @@ e2eDefaultParameters = E2EParameters { paramDHPrime = e2eDefaultPrime
                                      , paramHash = SHA256.hash
                                      , paramMac = HMAC.hmac SHA256.hash (512 `div` 8)
                                      , paramCheckMac = e2eDefaultCheckMac
-                                     , sendPubkey = False
                                      }

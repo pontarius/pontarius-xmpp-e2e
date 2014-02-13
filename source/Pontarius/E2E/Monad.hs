@@ -12,12 +12,11 @@
 module Pontarius.E2E.Monad where
 
 import                           Control.Applicative
-import                           Control.Monad
 import                           Control.Monad.Error
+import                           Control.Monad.Free
 import                           Control.Monad.Reader
 import                           Control.Monad.State.Strict
 import                           Control.Monad.Trans.State.Strict (liftCatch)
-import qualified                 Crypto.PubKey.DSA as DSA
 import qualified "crypto-random" Crypto.Random as CRandom
 import qualified                 Data.ByteString as BS
 import                           Pontarius.E2E.Types
@@ -60,44 +59,55 @@ getBytes b = withRandGen $ CRandom.cprgGenerate b
 
 data Parameters = Parameters
 
-type E2E g a = ErrorT E2EError (ReaderT E2EGlobals
-                                     (StateT E2EState
-                                      (RandT g
-                                        Messaging )))
-                                      a
+type E2E g a = ReaderT E2EGlobals
+               (StateT E2EState
+               (RandT g
+               (ErrorT E2EError
+               Messaging )))
+               a
 
 runE2E :: E2EGlobals
          -> E2EState
          -> g
          -> E2E g a
-         -> Messaging (((Either E2EError a), E2EState), g)
-runE2E globals s0 g = runRandT g
+         -> Messaging (Either E2EError ((a, E2EState), g))
+runE2E globals s0 g = runErrorT
+                      . runRandT g
                       . flip runStateT s0
                       . flip runReaderT globals
-                      . runErrorT
 
-instance Monad Messaging  where
-    return = Return
-    Return a >>= f = f a
-    SendMessage msg g >>= f = SendMessage msg (g >>= f)
-    GetPubkey fp g >>= f = GetPubkey fp (g >=> f)
-    Yield pl f >>= g = Yield pl (f >>= g)
-    RecvMessage g >>= f = RecvMessage ( g >=> f)
-    AskSmpSecret q g >>= f = AskSmpSecret q (g  >=> f)
-    SmpAuthenticated a g >>= f = SmpAuthenticated a (g >>= f)
-    StateChange s g >>= f = StateChange s (g >>= f)
+execE2E :: E2EGlobals
+         -> E2EState
+         -> g
+         -> E2E g a
+         -> Messaging (Either E2EError (E2EState, g))
+execE2E globals s0 g = runErrorT
+                      . (liftM $ \((_, s), g') -> (s,g'))
+                      . runRandT g
+                      . flip runStateT s0
+                      . flip runReaderT globals
+
+liftMessaging :: MessagingF (Free MessagingF a) -> E2E g a
+liftMessaging = lift . lift . lift . lift . Free
 
 yield :: BS.ByteString -> E2E g ()
-yield s = lift . lift . lift . lift $ Yield s (return ())
+yield s = liftMessaging $ Yield s (return ())
 
 askSecret :: Maybe BS.ByteString -> E2E g BS.ByteString
-askSecret q = lift . lift . lift . lift $ AskSmpSecret q return
+askSecret q =  liftMessaging $ AskSmpSecret q return
 
 recvMessage :: E2E g E2EMessage
-recvMessage = lift . lift . lift . lift $ RecvMessage return
+recvMessage = liftMessaging $ RecvMessage return
 
 sendMessage :: E2EMessage -> E2E g ()
-sendMessage msg = lift . lift . lift . lift $ SendMessage msg (return ())
+sendMessage msg = liftMessaging $ SendMessage msg (return ())
 
-getPubkey :: Fingerprint -> E2E g DSA.PublicKey
-getPubkey fp = lift . lift . lift . lift $ GetPubkey fp return
+sign :: BS.ByteString -> E2E g BS.ByteString
+sign bs = liftMessaging $ Sign bs return
+
+verify :: PubKey -> BS.ByteString -> BS.ByteString -> E2E g ()
+verify pkID signature plaintext =
+    liftMessaging $ Verify pkID plaintext signature (return ())
+
+stateChange :: MsgState -> E2E g ()
+stateChange s = liftMessaging $ StateChange s (return ())

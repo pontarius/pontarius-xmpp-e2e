@@ -1,17 +1,20 @@
+{-# LANGUAGE PatternGuards #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 -- We can't block during stanza handling, so we can't run the policy action in
 -- there.
 
-module Network.Xmpp.E2E ( e2eInit
-                        , startE2E
-                        , doEndSession
-                        , sendE2EMsg
-                        , getSsid
-                        , wasEncrypted
-                        , Network.Xmpp.E2E.getKey
-                        ) where
+module Network.Xmpp.E2E -- ( e2eInit
+                        -- , startE2E
+                        -- , doEndSession
+                        -- , sendE2EMsg
+                        -- , getSsid
+                        -- , wasEncrypted
+                        -- , Network.Xmpp.E2E.getKey
+                        -- )
+       where
 
 import           Control.Applicative ((<$>))
 import           Control.Concurrent
@@ -69,12 +72,12 @@ data E2EAnnotation = E2EA { ssidA :: BS.ByteString -- ^ Session ID of the
                           } deriving (Show, Typeable)
 
 handleE2E :: (Jid -> IO (Maybe Bool))
-             -> E2EContext
-             -> (Stanza -> IO a)
-             -> Stanza
-             -> [Annotation]
-             -> IO [Annotated Stanza]
-handleE2E policy sess out sta as = do
+          -> E2EContext
+          -> (Stanza -> IO a)
+          -> Stanza
+          -> [Annotation]
+          -> IO [(Stanza, [Annotation])]
+handleE2E policy sess out sta _ = do
     case sta of
         Xmpp.IQRequestS iqr -> case unpickle (xpRoot . xpOption
                                               $ akeMessageXml)
@@ -132,7 +135,7 @@ handleE2E policy sess out sta as = do
                 errorM "Pontarius.Xmpp.E2E" $
                     "Receiving data message produced error" ++ show e
                 return []
-            Right (r, sid) -> case readStanzas r of
+            Right r -> case readStanzas r of
                 Left e -> do
                     errorM "Pontarius.Xmpp.E2E" $
                               "Reading data message produced error" ++ show e
@@ -140,7 +143,7 @@ handleE2E policy sess out sta as = do
                 Right r' -> do
                     infoM "Pontarius.Xmpp.E2E" $ "e2e in: " ++ show r
                     return $ (\st -> ( set from (Just f) st
-                                     , [Annotation $ E2EA sid]))
+                                     , [Annotation $ E2EA "" ]))
                                     <$> r'
     escape = mzero
     handleAKE iqr msg = void . runMaybeT $ do
@@ -186,7 +189,7 @@ handleE2E policy sess out sta as = do
                                         ++ show from ++ ": " ++ show e
                                 badRequest iqr
                                 return (sess, ())
-                            Right (Just r) -> do
+                            Right [r] -> do
                                 result iqr . Just
                                     $ pickle (xpRoot akeMessageXml) r
                                 return (sess, ())
@@ -195,11 +198,16 @@ handleE2E policy sess out sta as = do
                                               ++ "in IQ request"
                 unexpected iqr
                 return ()
-
-
     startSession iqr from m = do
-        s <- newSession (globals sess) (getCtxSecret sess)
-                               (\_ -> return ()) (\_ -> return ()) (\_ -> return ()) (getPKey sess)
+        s <- newSession (globals sess) -- globals
+                        (getCtxSecret sess) -- get secret
+                        (\_ -> return ()) -- change of message state
+                        (\_ -> return ()) -- change of auth state
+                        (\_ -> return ()) -- send message
+                        return            -- sign
+                        ( \_ _ _ -> return True) -- verify
+
+
         startAke s responder
         res <- takeAkeMessage s m
         case res of
@@ -208,7 +216,7 @@ handleE2E policy sess out sta as = do
                                               ++ show from ++ ": " ++ show e
                 badRequest iqr
                 return Nothing
-            Right (Just r) -> do
+            Right [r] -> do
                 result iqr (Just $ pickle (xpRoot akeMessageXml) r)
                 return $ Just s
     endE2E from = do
@@ -235,25 +243,6 @@ handleE2E policy sess out sta as = do
     result (Xmpp.IQRequest iqid from _to lang _tp _bd) e = out
                 . Xmpp.IQResultS $ Xmpp.IQResult iqid Nothing from lang e
 
-e2eInit :: E2EGlobals
-        -> (Jid -> IO (Maybe Bool))
-        -> (Maybe BS.ByteString -> IO BS.ByteString)
-        -> (Fingerprint -> IO (Maybe Pubkey))
-        -> IO (E2EContext, Plugin)
-e2eInit globals policy sGen gpk = do
-    sessRef <- newTVarIO Nothing
-    peers <- newTMVarIO Map.empty
-    let sess = E2EContext peers sessRef globals sGen gpk
-    let plugin out = do
-            return Xmpp.Plugin' { Xmpp.inHandler = handleE2E policy sess out
-                                , Xmpp.outHandler = sendE2EMsg sess out
-                                , Xmpp.onSessionUp = \sess ->
-                                atomically $ writeTVar sessRef $ Just sess
-                                }
-    return (sess, plugin)
-
-
-
 -- | Start an E2E session with peer. This may block indefinitly (because the
 -- other side may have to ask the user whether to accept the session). So it
 -- can be necessary to run this in another thread or add a timeout.
@@ -274,7 +263,7 @@ startE2E to ctx onSS = maybe (return False) return =<< (runMaybeT $ do
 
             Just s -> doEndSession to xmppSession
         s <- newSession (globals ctx) (getCtxSecret ctx) onSS
-                    (\_ -> return ()) (\_ -> return ()) (getPKey ctx)
+                    (\_ -> return ()) (\_ -> return ()) (cSign ctx) (cVerify ctx)
         let sess' = Map.insert to s sess
         return (sess', s)
     liftIO . Ex.handle (\e -> do -- handle asyncronous exceptions
@@ -284,7 +273,7 @@ startE2E to ctx onSS = maybe (return False) return =<< (runMaybeT $ do
                     onSS MsgStatePlaintext
                     Ex.throw (e :: SomeException)
               ) $ do
-        Right ([E2EAkeMessage msg1], st, smp) <- startAke s initiator
+        Right [E2EAkeMessage msg1] <- startAke s initiator
         res <- runMaybeT $ do
             Just msg2 <- step s msg1 xmppSession
             Nothing <- step s msg2 xmppSession
@@ -328,9 +317,10 @@ startE2E to ctx onSS = maybe (return False) return =<< (runMaybeT $ do
                 liftIO . errorM "Pontarius.Xmpp.E2E" $ "Got protocol error : "
                                 ++ show e
                 mzero
-            Right r -> return r
+            Right [r] -> return $ Just r
 
 
+doEndSession :: Jid -> Session -> IO ()
 doEndSession to xmppSession = do
     let xml = pickle endSessionMessageXml ()
     Xmpp.sendMessage Xmpp.message{ Xmpp.messageTo = Just to
@@ -338,6 +328,11 @@ doEndSession to xmppSession = do
                                  } xmppSession
     return ()
 
+sendE2EMsg :: MonadIO m =>
+              E2EContext
+           -> (Stanza -> IO (Either XmppFailure ()))
+           -> Stanza
+           -> m (Either XmppFailure ())
 sendE2EMsg ctx out sta = maybe (return $ Right ()) return =<< ( runMaybeT $ do
     to' <- case view to sta of
         Nothing -> liftIO (out sta) >> mzero
@@ -360,7 +355,7 @@ sendE2EMsg ctx out sta = maybe (return $ Right ()) return =<< ( runMaybeT $ do
         Just p -> do
             res <- sendDataMessage (renderStanza sta) p
             case res of
-                Right ([E2EDataMessage msg], _, _) -> do
+                Right [E2EDataMessage msg] -> do
                     let xml = pickle dataMessageXml msg
                     out  . Xmpp.MessageS $
                             Xmpp.message{ Xmpp.messageTo = Just to'
@@ -375,8 +370,26 @@ sendE2EMsg ctx out sta = maybe (return $ Right ()) return =<< ( runMaybeT $ do
   where
     isE2E e = ((== Just e2eNs) . nameNamespace  . elementName) e
 
-getSsid :: Annotated a -> Maybe BS.ByteString
-getSsid = fmap ssidA . getAnnotation
+-- getSsid :: Annotated a -> Maybe BS.ByteString
+-- getSsid = fmap ssidA . getAnnotation
 
 wasEncrypted :: Annotated a -> Bool
 wasEncrypted = maybe False (const True) . getSsid
+
+e2eInit :: E2EGlobals
+        -> (Jid -> IO (Maybe Bool))
+        -> (Maybe BS.ByteString -> IO BS.ByteString)
+        -> (BS.ByteString -> IO BS.ByteString)
+        -> (PubKey -> BS.ByteString -> BS.ByteString -> IO Bool)
+        -> IO (E2EContext, Plugin)
+e2eInit globals policy sGen sign verify = do
+    sessRef <- newTVarIO Nothing
+    peers <- newTMVarIO Map.empty
+    let sess = E2EContext peers sessRef globals sGen sign verify
+    let plugin out = do
+            return Xmpp.Plugin' { Xmpp.inHandler = handleE2E policy sess out
+                                , Xmpp.outHandler = sendE2EMsg sess out
+                                , Xmpp.onSessionUp = \sess ->
+                                atomically $ writeTVar sessRef $ Just sess
+                                }
+    return (sess, plugin)

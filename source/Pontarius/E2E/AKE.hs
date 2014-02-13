@@ -6,18 +6,17 @@ import           Control.Applicative ((<$>))
 import           Control.Monad.Error
 import           Control.Monad.Reader
 import           Control.Monad.State
-import qualified Crypto.PubKey.DSA as DSA
 import qualified Crypto.Random as CRandom
 import           Data.Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Lazy.Builder as BSB
 import           Data.Foldable (foldMap)
-import           Data.Monoid (mappend)
-import           Pontarius.E2E.Helpers
+import           Data.Monoid
 import           Pontarius.E2E.Monad
 import           Pontarius.E2E.Serialize
 import           Pontarius.E2E.Types
+import           Pontarius.E2E.Helpers
 
 -------------------------------------
 -- The high level protocol ----------
@@ -140,7 +139,7 @@ mkAuthMessage keyType = do
     let (macKey1, macKey2, aesKey)  = case keyType of
             KeysRSM -> (kdM1 , kdM2 , kdC )
             KeysSM  -> (kdM1', kdM2', kdC')
-    (ourPub, _) <- asks dsaKeyPair
+    ourPub <- asks pubKey
     keyID <- gets ourKeyID
     mb <- m gx gy ourPub macKey1
     sig <- sign mb
@@ -159,50 +158,33 @@ checkAndSaveAuthMessage keyType (SM xEncrypted xEncMac) = do
     xEncMac' <- mac macKey2 xEncrypted
     protocolGuard MACFailure "auth message" $ (xEncMac' =~= xEncMac)
     xDec <- decCtrZero cryptKey xEncrypted
-    SD maybeTheirPub theirKeyID sig <- jsonDecode xDec
-    theirPub <- case maybeTheirPub of
-        Left pk -> return pk
-        Right fp -> getPubkey fp
-    theirM <- m gy gx theirPub macKey1
-    -- check that the public key they present is the one we have stored (if any)
-    storedPubkey <- gets theirPublicKey
-    case storedPubkey of
-        Nothing -> return ()
-        Just sp -> protocolGuard PubkeyMismatch "" $ sp == theirPub
-    protocolGuard SignatureMismatch "" $ DSA.verify id theirPub sig theirM
+    SD theirPID theirKeyID sig <- jsonDecode xDec
+    theirM <- m gy gx theirPID macKey1
+    verify theirPID sig theirM
     modify $ \s' -> s'{ theirKeyID = theirKeyID
-                      , theirPublicKey = Just theirPub
                       , ssid = Just kdSsid
                       }
 
 m :: MonadReader E2EGlobals m
      => Integer
      -> Integer
-     -> DSA.PublicKey
+     -> PubKey
      -> BS.ByteString
      -> m BS.ByteString
 m ours theirs pubKey messageAuthKey = do
     let m' = BS.concat . BSL.toChunks . BSB.toLazyByteString $
              foldMap toMPIBuilder [ ours , theirs]
-             `mappend` encodePubkeyBuilder pubKey
+             <> encodePubkey pubKey
     mac messageAuthKey m'
-  where
-    encodePubkeyBuilder (DSA.PublicKey (DSA.Params p g q) y) =
-        foldMap toMPIBuilder [p, q, g, y]
 
-
-xs :: DSA.PublicKey
+xs :: PubKey
    -> Integer
-   -> DSA.Signature
+   -> BS.ByteString
    -> BS.ByteString
    -> BS.ByteString
    -> E2E g (BS.ByteString, BS.ByteString)
 xs pub kid sig aesKey macKey = do
-    sP <- parameter sendPubkey
-    pubKeyHash <- hash $ encodePubkey pub
-    let sd = SD{ sdPub   = if sP
-                           then Left pub
-                           else Right (KeyTypeDSA, pubKeyHash)
+    let sd = SD{ sdPubKey = pub
                , sdKeyID = kid
                , sdSig   = sig
                }

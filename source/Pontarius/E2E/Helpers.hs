@@ -7,7 +7,6 @@ import           Control.Monad.State
 import           Control.Monad.Error
 import           Control.Monad.Identity
 import           Crypto.Number.ModArithmetic as Mod
-import qualified Crypto.PubKey.DSA as DSA
 import qualified Crypto.Random as CRandom
 import           Data.Bits (shiftR)
 import qualified Data.ByteString as BS
@@ -94,7 +93,7 @@ putAuthState as = do modify $ \s -> s{authState = as }
 
 putMsgState :: MsgState -> E2E g ()
 putMsgState ms = do
-    lift . lift . lift . lift $ StateChange ms (return ())
+    stateChange ms
     modify $ \s -> s{msgState = ms }
 
 makeDHSharedSecret :: Integer -> Integer -> E2E g Integer
@@ -109,14 +108,6 @@ doHash :: MonadReader E2EGlobals m => BS.ByteString -> m BS.ByteString
 doHash pl = do
     h <- parameter paramHash
     return $ h pl
-
--- sign :: CRandom.CPRG g => BS.ByteString -> E2E g DSA.Signature
-sign :: (MonadReader E2EGlobals m, CRandom.CPRG g, MonadRandom g m) =>
-        BS.ByteString -> m DSA.Signature
-sign x = do
-   (_, privKey) <- asks dsaKeyPair
-   withRandGen $ \g -> DSA.sign g privKey id x
-
 
 makeDHKeyPair :: (Applicative m, MonadReader E2EGlobals m, CRandom.CPRG g,
                   MonadRandom g m) =>
@@ -148,7 +139,6 @@ newState = do
     return E2EState{ ourPreviousKey   = opk
                    , ourCurrentKey    = ock
                    , ourKeyID         = 1
-                   , theirPublicKey   = Nothing
                    , theirCurrentKey  = Nothing
                    , mostRecentKey    = 2
                    , nextDH           = ndh
@@ -162,13 +152,10 @@ newState = do
                    , smpState         = Nothing
                    }
 
-withNewState :: CRandom.CPRG g => E2EGlobals
-                               -> g
-                               -> E2E g a
-                               -> Messaging ((Either E2EError a, E2EState), g)
-withNewState globals g side = do
-    let (st, g') = runIdentity $ runRandT g $ runReaderT newState globals
-    runE2E globals st g' side
-
-pubkeyFingerprint :: E2EParameters -> DSA.PublicKey -> BS.ByteString
-pubkeyFingerprint params = paramHash params . encodePubkey
+-- withNewState :: CRandom.CPRG g => E2EGlobals
+--                                -> g
+--                                -> E2E g a
+--                                -> Messaging ((Either E2EError a, E2EState), g)
+-- withNewState gs g side = do
+--     let (st, g') = runIdentity $ runRandT g $ runReaderT newState gs
+--     runE2E gs st g' side

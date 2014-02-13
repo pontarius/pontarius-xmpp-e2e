@@ -3,23 +3,20 @@
 module Pontarius.E2E.Types
 where
 
-import qualified Control.Monad.CryptoRandom as CR
-import           Control.Monad.Error
-import qualified Crypto.PubKey.DSA as DSA
-import qualified Data.ByteString as BS
-import           Data.Typeable (Typeable)
 import           Control.Concurrent
 import           Control.Concurrent.STM
-import qualified Data.Map as Map
-import           Network.Xmpp.Types as Xmpp
+import qualified Control.Monad.CryptoRandom as CR
+import           Control.Monad.Error
+import           Control.Monad.Free
 import qualified Crypto.Random as CRandom
+import qualified Data.ByteString as BS
+import qualified Data.Map as Map
+import           Data.Typeable (Typeable)
 import qualified Network.Xmpp as Xmpp
 
 type CTR = BS.ByteString
 type MAC = BS.ByteString
 type DATA = BS.ByteString
-
-type Pubkey = DSA.PublicKey
 
 data DHKeyPair = DHKeyPair { pub  :: !Integer
                            , priv :: !Integer
@@ -77,7 +74,6 @@ data SmpMessage = SmpMessage1 {g2a, c2, d2, g3a, c3, d3 :: !Integer }
 data E2EState = E2EState { authState        :: !AuthState
                          , msgState         :: !MsgState
                          , ourKeyID         :: !Integer -- KeyID of ourCurrentKey
-                         , theirPublicKey   :: !(Maybe DSA.PublicKey) -- DSA
                          , ourCurrentKey    :: !DHKeyPair
                          , ourPreviousKey   :: !DHKeyPair
                          , mostRecentKey    :: !Integer -- KeyID of the most
@@ -181,23 +177,20 @@ data E2EParameters = E2EParameters { paramDHPrime :: !Integer
                                                    -> BS.ByteString -- payload
                                                    -> BS.ByteString -- MAC
                                                    -> Bool
-                                   , sendPubkey :: Bool
                                    }
 
-type DSAKeyPair = (DSA.PublicKey, DSA.PrivateKey)
-
 data E2EGlobals = E2EG { parameters :: !E2EParameters
-                       , dsaKeyPair :: !DSAKeyPair
+                       , pubKey :: !PubKey
                        }
 
-data KeyType = KeyTypeDSA | KeyTypeRSA -- ECDSA
-                            deriving (Show, Read, Eq, Ord)
+data PubKey = PubKey { pubKeyType :: !BS.ByteString
+                     , pubKeyIdent :: !BS.ByteString
+                     } deriving (Eq, Show)
 
-type Fingerprint = (KeyType, BS.ByteString)
 
-data SignatureData = SD { sdPub   ::  !(Either DSA.PublicKey Fingerprint)
-                        , sdKeyID :: !Integer
-                        , sdSig   :: !DSA.Signature
+data SignatureData = SD { sdPubKey   :: !PubKey
+                        , sdKeyID    :: !Integer
+                        , sdSig      :: !BS.ByteString
                         } deriving (Eq, Show)
 
 data AuthKeys = KeysRSM -- RevealSignatureMessage
@@ -209,33 +202,41 @@ data E2EMessage = E2EAkeMessage {unE2EAkeMessage ::  !E2EAkeMessage}
                 | E2EEndSessionMessage
                   deriving Show
 
-data Messaging a = SendMessage !E2EMessage (Messaging a)
-                 | RecvMessage (E2EMessage -> Messaging a)
-                 | GetPubkey Fingerprint (DSA.PublicKey -> Messaging a)
-                 | Yield !BS.ByteString (Messaging a)
-                 | AskSmpSecret !(Maybe BS.ByteString)
-                                (BS.ByteString -> Messaging a)
-                 | StateChange !MsgState (Messaging a)
-                 | SmpAuthenticated !Bool (Messaging a)
-                 | Log !String (Messaging a)
-                 | Return a
-                 deriving Functor
+data MessagingF a = SendMessage !E2EMessage a
+                  | RecvMessage (E2EMessage -> a)
+                  | Yield !BS.ByteString a
+                  | AskSmpSecret !(Maybe BS.ByteString) (BS.ByteString -> a)
+                  | StateChange !MsgState a
+                  | SmpAuthenticated !Bool a
+                  | Log !String a
+                  | Sign !BS.ByteString (BS.ByteString -> a)
+                  | Verify !PubKey        -- | Public key
+                           !BS.ByteString -- | Signature
+                           !BS.ByteString -- | Plain Text
+                           a
+                  deriving Functor
 
-instance Show a => Show (Messaging a) where
+type Messaging = Free MessagingF
+
+instance Show a => Show (MessagingF a) where
     show (SendMessage msg f) = "SendMessage{" ++ show msg ++ "}> " ++ show f
     show (RecvMessage _) = "RecvMsg(...)"
-    show (GetPubkey fp _) = "GetPubkey{" ++ show fp ++ "}(...)"
     show (Yield y f) = "Yield{" ++ show y ++ "}> " ++ show f
     show (AskSmpSecret q _) = "AskSmpSecret{" ++ show q ++ "}(..)"
     show (StateChange st f) = "StateChange{" ++ show st ++ "}> " ++ show f
     show (SmpAuthenticated b f) = "SmpAuthenticated{" ++ show b ++ "}> " ++ show f
     show (Log l f) = "Log{" ++ show l ++ "}> " ++ show f
-    show (Return a) = "Return{" ++ show a ++ "}"
+    show (Sign bs _) = "Sign{" ++ show bs ++ "}(...) "
+    show (Verify pkid plain sig f) = concat $
+                                     [ "Verify{key: ", show pkid
+                                     , "plaintext: ", show plain
+                                     , "signature: ", show sig
+                                     , "}> ", show f
+                                     ]
 
 
-type DSAKeys = (DSA.PublicKey, DSA.PrivateKey)
 
-type RunState g = Messaging ((Either E2EError (), E2EState), g)
+type RunState g = Either E2EError (E2EState, g)
 
 data E2EContext = E2EContext { peers :: TMVar (Map.Map Xmpp.Jid
                                                  (E2ESession CRandom.SystemRNG))
@@ -243,16 +244,26 @@ data E2EContext = E2EContext { peers :: TMVar (Map.Map Xmpp.Jid
                              , globals :: E2EGlobals
                              , getCtxSecret :: Maybe BS.ByteString
                                             -> IO BS.ByteString
-                             , getPKey :: Fingerprint -> IO (Maybe Pubkey)
+                             , cSign :: BS.ByteString -> IO BS.ByteString
+                             , cVerify :: PubKey
+                                       -> BS.ByteString
+                                       -> BS.ByteString
+                                       -> IO Bool
                              }
 
-data E2ESession g = E2ESession { e2eGlobals :: E2EGlobals
-                               , e2eState :: MVar (Either (RunState g)
-                                                  (E2EState, g))
-                               , getSessSecret :: Maybe BS.ByteString
+data Run g = Wait (E2EMessage -> Messaging (RunState g))
+           | Done (RunState g)
+
+data E2ESession g = E2ESession { sE2eGlobals :: E2EGlobals
+                               , sE2eState :: MVar (Run g)
+                               , sGetSessSecret :: Maybe BS.ByteString
                                                -> IO BS.ByteString
-                               , onSendMessage :: E2EMessage -> IO ()
-                               , onStateChange :: MsgState -> IO ()
-                               , onSmpAuthChange :: Bool -> IO ()
-                               , getKey :: Fingerprint -> IO (Maybe Pubkey)
+                               , sOnSendMessage :: E2EMessage -> IO ()
+                               , sOnStateChange :: MsgState -> IO ()
+                               , sOnSmpAuthChange :: Bool -> IO ()
+                               , sSign :: BS.ByteString -> IO BS.ByteString
+                               , sVerify :: PubKey
+                                            -> BS.ByteString
+                                            -> BS.ByteString
+                                            -> IO Bool
                                }
