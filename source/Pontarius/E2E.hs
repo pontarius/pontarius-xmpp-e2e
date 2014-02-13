@@ -7,9 +7,7 @@ import qualified Crypto.Cipher.AES as AES
 import qualified Crypto.Hash.SHA256 as SHA256 (hash)
 import qualified Crypto.MAC.HMAC as HMAC
 import qualified Data.ByteString as BS
-import           Pontarius.E2E.AKE
 import           Pontarius.E2E.Helpers
-import           Pontarius.E2E.Session
 import           Pontarius.E2E.Types
 
 e2eDefaultPrime :: Integer

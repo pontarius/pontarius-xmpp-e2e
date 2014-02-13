@@ -16,7 +16,6 @@ module Pontarius.E2E.Session
        where
 import           Control.Applicative((<$>))
 import           Control.Concurrent hiding (yield)
-import qualified Control.Exception as Ex
 import           Control.Monad
 import           Control.Monad.Error
 import           Control.Monad.Free
@@ -25,7 +24,6 @@ import           Control.Monad.Reader (runReaderT)
 import           Control.Monad.Writer
 import qualified Crypto.Random as CRandom
 import qualified Data.ByteString as BS
-import           Data.Maybe (listToMaybe)
 import           System.Log.Logger
 
 import           Pontarius.E2E.Monad
@@ -42,7 +40,7 @@ newSession :: E2EGlobals
            -> (BS.ByteString -> IO BS.ByteString)
            -> (PubKey -> BS.ByteString -> BS.ByteString -> IO Bool)
            -> IO (E2ESession CRandom.SystemRNG)
-newSession globals sGen oss osmp sm sign verify = do
+newSession globals sGen oss osmp sm sign' verify' = do
     g <- CRandom.cprgCreate <$> CRandom.createEntropyPool :: IO CRandom.SystemRNG
     let (st, g') = runIdentity $ runRandT g $ runReaderT newState globals
     s <- newMVar $ Done $ Right (st, g')
@@ -52,8 +50,8 @@ newSession globals sGen oss osmp sm sign verify = do
                      , sOnSendMessage   = sm
                      , sOnStateChange   = oss
                      , sOnSmpAuthChange = osmp
-                     , sSign            = sign
-                     , sVerify          = verify
+                     , sSign            = sign'
+                     , sVerify          = verify'
                      }
 
 advanceMessaging :: E2ESession g
@@ -68,22 +66,22 @@ advanceMessaging s f = do
             return (r, mys)
         (w@Wait{}, ms) -> return (w, ms)
   where
-    go (Free (SendMessage m f)) = tell ([], [m]) >> go f
-    go rcv@(Free (RecvMessage f)) = return $ Wait f
-    go (Free (Yield y f)) = tell ([y], []) >> go f
-    go (Free (AskSmpSecret mbQs f)) = liftIO (sGetSessSecret s mbQs) >>= go . f
-    go (Free (StateChange st f)) = liftIO (sOnStateChange s st) >> go f
-    go (Free (SmpAuthenticated a f)) = liftIO (sOnSmpAuthChange s a) >> go f
-    go (Free (Log l f)) = liftIO (infoM "Pontarius.Xmpp.E2E" l) >> go f
-    go (Free (Sign pt f)) = liftIO (sSign s pt) >>= go . f
-    go (Free (Verify pk sig pt f)) = do
+    go (Free (SendMessage m g)) = tell ([], [m]) >> go g
+    go (Free (RecvMessage g)) = return $ Wait g
+    go (Free (Yield y g)) = tell ([y], []) >> go g
+    go (Free (AskSmpSecret mbQs g)) = liftIO (sGetSessSecret s mbQs) >>= go . g
+    go (Free (StateChange st g)) = liftIO (sOnStateChange s st) >> go g
+    go (Free (SmpAuthenticated a g)) = liftIO (sOnSmpAuthChange s a) >> go g
+    go (Free (Log l g)) = liftIO (infoM "Pontarius.Xmpp.E2E" l) >> go g
+    go (Free (Sign pt g)) = liftIO (sSign s pt) >>= go . g
+    go (Free (Verify pk sig pt g)) = do
         v <- liftIO $ sVerify s pk sig pt
         case v of
-            True -> go f
+            True -> go g
             False -> liftIO $ do
                 errorM "Pontarius.Xmpp.E2E" "Verify signature failed"
                 return . Done .Left $ ProtocolError SignatureMismatch ""
-    go p@(Pure a) = return $ Done a
+    go (Pure a) = return $ Done a
 
 
 withSession :: E2ESession g
@@ -150,7 +148,7 @@ takeDataMessage sess msg = do
     case res of
         Left e -> return $ Left e
         Right ([y],[]) -> return $ Right y
-        Right ys -> error "Data message yielded multiple results"
+        Right _ys -> error "Data message yielded multiple results"
 
 takeMessage :: CRandom.CPRG g =>
                E2ESession g
@@ -170,8 +168,8 @@ takeMessage sess msg = modifyMVar (sE2eState sess) $ \rs -> do
     res <- advanceMessaging sess r
     case res of
         (w@Wait{}, ys) -> return $ (w, Right ys)
-        (r@(Done Right{}), ys) -> return $ (r, Right ys)
-        (Done (Left e), ys) -> return (rs, Left e)
+        (r'@(Done Right{}), ys) -> return $ (r', Right ys)
+        (Done (Left e), _ys) -> return (rs, Left e)
 
 initiator :: CRandom.CPRG g => E2E g ()
 initiator = alice
