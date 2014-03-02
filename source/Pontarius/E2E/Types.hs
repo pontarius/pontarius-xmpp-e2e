@@ -185,7 +185,7 @@ data E2EGlobals = E2EG { parameters :: !E2EParameters
 
 data PubKey = PubKey { pubKeyType :: !BS.ByteString
                      , pubKeyIdent :: !BS.ByteString
-                     } deriving (Eq, Show)
+                     } deriving (Eq, Ord, Show, Typeable)
 
 
 data SignatureData = SD { sdPubKey   :: !PubKey

@@ -29,10 +29,8 @@ import qualified Data.Text.Encoding as Text
 import           Data.Word
 import           Data.XML.Pickle
 import           Data.XML.Types
-import           Network.Xmpp.Marshal (xpStanza)
-import           Network.Xmpp.Stream (elements)
-import           Network.Xmpp.Types (Stanza, XmppFailure)
-import           Network.Xmpp.Utilities (renderElement)
+import           Network.Xmpp.Internal (xpStanza, elements, renderElement, Stanza)
+import           Network.Xmpp (XmppFailure)
 import           Pontarius.E2E.Types
 import           Text.XML.Stream.Parse
 
@@ -122,26 +120,38 @@ instance FromJSON SignatureData where
     parseJSON (Object v) = do
         pubID <- pubKeyIDfromJSON =<< v .: "pubkey"
         kid <- v .: "keyID"
-        sig <- v .: "signature"
+        B64BS sig <- v .: "signature"
         return $ SD pubID kid sig
     parseJSON _ = mzero
 
+newtype B64BS = B64BS {unB64BS :: BS.ByteString} deriving (Show, Eq)
+
+instance ToJSON B64BS where
+    toJSON = toJSON . Text.decodeUtf8 . B64.encode . unB64BS
+
+instance FromJSON B64BS where
+    parseJSON v = do
+        mbb64 <- B64.decode . Text.encodeUtf8 <$> parseJSON v
+        case mbb64 of
+            Left _e -> mzero
+            Right bs -> return $ B64BS bs
+
 pubKeytoJSON :: PubKey -> Value
-pubKeytoJSON (PubKey tp fprint) = object [ "type" .= tp
-                                         , "fingerprint" .= fprint
+pubKeytoJSON (PubKey tp fprint) = object [ "type" .= B64BS tp
+                                         , "fingerprint" .= B64BS fprint
                                          ]
 
 pubKeyIDfromJSON :: Value -> Parser PubKey
 pubKeyIDfromJSON (Object v) = do
-    tpString <- v .: "type"
-    fprint <- v   .: "id"
+    B64BS tpString <- v .: "type"
+    B64BS fprint <- v   .: "id"
     return $ PubKey tpString fprint
 pubKeyIDfromJSON _ = mzero
 
 instance ToJSON SignatureData where
     toJSON SD{..} = object [ "pubkey"    .= pubKeytoJSON sdPubKey
                            , "keyID"     .= sdKeyID
-                           , "signature" .= sdSig
+                           , "signature" .= B64BS sdSig
                            ]
 
 -- See Issue 142 in AESON: https://github.com/bos/aeson/issues/142

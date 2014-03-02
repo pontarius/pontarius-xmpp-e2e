@@ -13,6 +13,9 @@ module Network.Xmpp.E2E ( e2eInit
 --                        , getSsid
                         , wasEncrypted
                         , Network.Xmpp.E2E.getKey
+                        , PubKey(..)
+                        , E2EGlobals(..)
+                        , e2eDefaultParameters
                         ) where
 
 import           Control.Applicative ((<$>))
@@ -30,11 +33,9 @@ import qualified Data.Map as Map
 import           Data.Typeable
 import           Data.XML.Pickle
 import           Data.XML.Types
-import qualified Network.Xmpp as Xmpp
-import           Network.Xmpp.Concurrent.Types as Xmpp
+import           Network.Xmpp as Xmpp
 import qualified Network.Xmpp.Internal as Xmpp
 import           Network.Xmpp.Lens
-import           Network.Xmpp.Types as Xmpp
 import           Pontarius.E2E.Serialize
 import           Pontarius.E2E.Session
 import           Pontarius.E2E.Types
@@ -48,6 +49,9 @@ import           Data.ASN1.Encoding
 import           Data.ASN1.Types hiding (Set)
 import qualified Data.ByteString.Lazy as BSL
 import           Data.PEM
+
+import           Pontarius.E2E
+
 
 data Side = Initiator | Responder deriving (Show, Eq)
 
@@ -71,10 +75,10 @@ data E2EAnnotation = E2EA { ssidA :: BS.ByteString -- ^ Session ID of the
 
 handleE2E :: (Jid -> IO (Maybe Bool))
           -> E2EContext
-          -> (Stanza -> IO a)
-          -> Stanza
+          -> (Xmpp.Stanza -> IO a)
+          -> Xmpp.Stanza
           -> [Annotation]
-          -> IO [(Stanza, [Annotation])]
+          -> IO [(Xmpp.Stanza, [Annotation])]
 handleE2E policy sess out sta _ = do
     case sta of
         Xmpp.IQRequestS iqr -> case unpickle (xpRoot . xpOption
@@ -342,8 +346,8 @@ doEndSession t xmppSession = do
 
 sendE2EMsg :: MonadIO m =>
               E2EContext
-           -> (Stanza -> IO (Either XmppFailure ()))
-           -> Stanza
+           -> (Xmpp.Stanza -> IO (Either XmppFailure ()))
+           -> Xmpp.Stanza
            -> m (Either XmppFailure ())
 sendE2EMsg ctx out sta = maybe (return $ Right ()) return =<< ( runMaybeT $ do
     to' <- case view to sta of
@@ -354,10 +358,10 @@ sendE2EMsg ctx out sta = maybe (return $ Right ()) return =<< ( runMaybeT $ do
     -- handled here. The right way to do it would be to do all this on the
     -- plugin-level.
     case sta of
-        IQRequestS iqr -> if isE2E $ iqRequestPayload iqr
+        Xmpp.IQRequestS iqr -> if isE2E $ iqRequestPayload iqr
                           then liftIO (out sta) >> mzero
                           else return ()
-        MessageS msg -> case find isE2E $ messagePayload msg of
+        Xmpp.MessageS msg -> case find isE2E $ messagePayload msg of
             Just _ -> liftIO (out sta) >> mzero
             Nothing -> return ()
         _ -> return ()
@@ -384,7 +388,7 @@ sendE2EMsg ctx out sta = maybe (return $ Right ()) return =<< ( runMaybeT $ do
     isE2E e = ((== Just e2eNs) . nameNamespace  . elementName) e
 
 getSsid :: Annotated a -> Maybe BS.ByteString
-getSsid = fmap ssidA . getAnnotation
+getSsid = fmap ssidA . Xmpp.getAnnotation
 
 wasEncrypted :: Annotated a -> Bool
 wasEncrypted = maybe False (const True) . getSsid
