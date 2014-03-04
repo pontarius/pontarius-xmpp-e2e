@@ -81,12 +81,14 @@ handleE2E :: (Jid -> IO (Maybe Bool))
           -> IO [(Xmpp.Stanza, [Annotation])]
 handleE2E policy sess out sta _ = do
     case sta of
-        Xmpp.IQRequestS iqr -> case unpickle (xpRoot . xpOption
+        Xmpp.IQRequestS iqr -> case unpickle (xpRoot . xpClean . xpOption
                                               $ akeMessageXml)
                                               $ Xmpp.iqRequestPayload iqr of
                                    Left e -> do
                                        errorM "Pontarius.Xmpp.E2E" $
-                                              "UnpickleError: " ++ show e
+                                              "UnpickleError: "
+                                              ++ ppUnpickleError e
+                                              ++ "\n in \n" ++ show iqr
                                        return []
                                    Right Nothing -> return [(sta, [])]
                                                     -- Fork to avoid blocking
@@ -100,7 +102,7 @@ handleE2E policy sess out sta _ = do
                                 $ "Data Message received from "
                                 ++ show (Xmpp.messageFrom msg)
                                 ++ " produced error"
-                                ++ show e
+                                ++ ppUnpickleError e
                             left []
                         Right Nothing -> left [(sta, [])]
                         Right (Just msg') | Just from' <- Xmpp.messageFrom msg
