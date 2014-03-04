@@ -100,8 +100,8 @@ encodePubkey (PubKey tp fprint) =
 -- JSON ------------------------------
 --------------------------------------
 
-pubKeyFromJson :: Value -> Parser DSA.PublicKey
-pubKeyFromJson = withObject "DSA Public Key" dsaPBFJ
+dsaPubKeyFromJson :: Value -> Parser DSA.PublicKey
+dsaPubKeyFromJson = withObject "DSA Public Key" dsaPBFJ
   where
     dsaPBFJ  o = DSA.PublicKey <$> paramsFJ o
                                <*> (b64ToInt =<< o .: "y")
@@ -109,12 +109,12 @@ pubKeyFromJson = withObject "DSA Public Key" dsaPBFJ
                             <*> (b64ToInt =<< o .: "g")
                             <*> (b64ToInt =<< o .: "q")
 
-pubKeyToJson :: DSA.PublicKey -> Value
-pubKeyToJson (DSA.PublicKey (DSA.Params p g q) y)  = object [ "p" .=  intToB64 p
-                                                            , "g" .=  intToB64 g
-                                                            , "q" .=  intToB64 q
-                                                            , "y" .=  intToB64 y
-                                                            ]
+dsaPubKeyToJson :: DSA.PublicKey -> Value
+dsaPubKeyToJson (DSA.PublicKey (DSA.Params p g q) y)  = object [ "p" .=  intToB64 p
+                                                               , "g" .=  intToB64 g
+                                                               , "q" .=  intToB64 q
+                                                               , "y" .=  intToB64 y
+                                                               ]
 
 instance FromJSON SignatureData where
     parseJSON (Object v) = do
@@ -144,7 +144,7 @@ pubKeytoJSON (PubKey tp fprint) = object [ "type" .= B64BS tp
 pubKeyIDfromJSON :: Value -> Parser PubKey
 pubKeyIDfromJSON (Object v) = do
     B64BS tpString <- v .: "type"
-    B64BS fprint <- v   .: "id"
+    B64BS fprint <- v   .: "fingerprint"
     return $ PubKey tpString fprint
 pubKeyIDfromJSON _ = mzero
 
