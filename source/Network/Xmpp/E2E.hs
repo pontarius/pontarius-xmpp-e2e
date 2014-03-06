@@ -216,8 +216,8 @@ handleE2E policy sess out sta _ = do
                         (\_ -> return ()) -- change of message state
                         (\_ -> return ()) -- change of auth state
                         (\_ -> return ()) -- send message
-                        return            -- sign
-                        ( \_ _ _ -> return True) -- verify
+                        (cSign sess)            -- sign
+                        (cVerify sess) -- verify
 
 
         _ <- startAke s responder

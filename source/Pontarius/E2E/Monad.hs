@@ -107,7 +107,7 @@ sign bs = liftMessaging $ Sign bs return
 
 verify :: PubKey -> BS.ByteString -> BS.ByteString -> E2E g ()
 verify pkID signature plaintext =
-    liftMessaging $ Verify pkID plaintext signature (return ())
+    liftMessaging $ Verify pkID signature plaintext (return ())
 
 stateChange :: MsgState -> E2E g ()
 stateChange s = liftMessaging $ StateChange s (return ())
