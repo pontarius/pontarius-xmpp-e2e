@@ -331,9 +331,10 @@ startE2E t ctx onSS = maybe (return False) return =<< (runMaybeT $ do
                                 ++ show e
                 mzero
             Right [r] -> return $ Just r
+            Right [] -> return Nothing
             Right _ -> do
                 liftIO . criticalM "Pontarius.Xmpp.E2E" $
-                          "takeAkeMessage didn't result in exactly one answer"
+                          "takeAkeMessage resulted in more than one answer"
                 mzero
 
 
