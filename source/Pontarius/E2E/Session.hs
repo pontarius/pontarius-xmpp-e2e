@@ -17,7 +17,7 @@ module Pontarius.E2E.Session
 import           Control.Applicative((<$>))
 import           Control.Concurrent hiding (yield)
 import           Control.Monad
-import           Control.Monad.Error
+import           Control.Monad.Except
 import           Control.Monad.Free
 import           Control.Monad.Identity (runIdentity)
 import           Control.Monad.Reader (runReaderT)

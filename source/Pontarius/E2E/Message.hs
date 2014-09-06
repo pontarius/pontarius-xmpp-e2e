@@ -2,7 +2,7 @@
 module Pontarius.E2E.Message where
 
 import           Control.Monad
-import           Control.Monad.Error
+import           Control.Monad.Except
 import           Control.Monad.State.Strict
 import qualified Crypto.Random as CRandom
 import qualified Data.ByteString as BS

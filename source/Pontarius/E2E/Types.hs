@@ -6,7 +6,6 @@ where
 import           Control.Concurrent
 import           Control.Concurrent.STM
 import qualified Control.Monad.CryptoRandom as CR
-import           Control.Monad.Error
 import           Control.Monad.Free
 import qualified Crypto.Random as CRandom
 import qualified Data.ByteString as BS
@@ -51,9 +50,6 @@ data E2EError = WrongState String
               | NoPubkey -- We don't know the pubkey with the give fingerprint
               | ProtocolError ProtocolError String -- One of the checks failed
                 deriving (Show, Eq, Typeable)
-
-instance Error E2EError where
-    strMsg = WrongState
 
 data AuthState = AuthStateNone
                | AuthStateAwaitingDHKey BS.ByteString

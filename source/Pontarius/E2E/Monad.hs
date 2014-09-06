@@ -12,7 +12,7 @@
 module Pontarius.E2E.Monad where
 
 import                           Control.Applicative
-import                           Control.Monad.Error
+import                           Control.Monad.Except
 import                           Control.Monad.Free
 import                           Control.Monad.Reader
 import                           Control.Monad.State.Strict
@@ -43,7 +43,7 @@ instance (MonadRandom g m, Monad m) => MonadRandom g (ReaderT r m) where
 instance (MonadRandom g m, Monad m) => MonadRandom g (StateT s m) where
     withRandGen = lift . withRandGen
 
-instance (MonadRandom g m, Monad m, Error e) => MonadRandom g (ErrorT e m) where
+instance (MonadRandom g m, Monad m) => MonadRandom g (ExceptT e m) where
     withRandGen = lift . withRandGen
 
 instance MonadState s m => MonadState s (RandT g m) where
@@ -62,7 +62,7 @@ data Parameters = Parameters
 type E2E g a = ReaderT E2EGlobals
                (StateT E2EState
                (RandT g
-               (ErrorT E2EError
+               (ExceptT E2EError
                Messaging )))
                a
 
@@ -71,7 +71,7 @@ runE2E :: E2EGlobals
          -> g
          -> E2E g a
          -> Messaging (Either E2EError ((a, E2EState), g))
-runE2E globals s0 g = runErrorT
+runE2E globals s0 g = runExceptT
                       . runRandT g
                       . flip runStateT s0
                       . flip runReaderT globals
@@ -81,7 +81,7 @@ execE2E :: E2EGlobals
          -> g
          -> E2E g a
          -> Messaging (Either E2EError (E2EState, g))
-execE2E globals s0 g = runErrorT
+execE2E globals s0 g = runExceptT
                       . (liftM $ \((_, s), g') -> (s,g'))
                       . runRandT g
                       . flip runStateT s0

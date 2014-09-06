@@ -8,7 +8,7 @@ where
 import           Control.Applicative ((<$>), (<*>))
 import           Control.Exception (SomeException)
 import           Control.Monad
-import           Control.Monad.Error
+import           Control.Monad.Except
 import qualified Crypto.PubKey.DSA as DSA
 import           Data.Aeson
 import           Data.Aeson.Types (Parser)
@@ -302,10 +302,10 @@ readStanzas bs = es >>= mapM (\el -> case unpickle xpStanza' el of
               $= liftError elements $$ CL.consume of
         Left e -> Left $ show (e :: SomeException)
         Right r -> Right r
-    liftError :: ConduitM i o (ErrorT XmppFailure (Either SomeException)) r
+    liftError :: ConduitM i o (ExceptT XmppFailure (Either SomeException)) r
               -> ConduitM i o (Either SomeException) r
     liftError = transPipe$ \f -> do
-        res <- runErrorT f
+        res <- runExceptT f
         case res of
             Left e -> throwM e
             Right r -> return r

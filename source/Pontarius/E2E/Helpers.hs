@@ -4,7 +4,7 @@ module Pontarius.E2E.Helpers where
 import           Control.Applicative (Applicative, (<$>), (<*>), pure)
 import           Control.Monad.Reader
 import           Control.Monad.State
-import           Control.Monad.Error
+import           Control.Monad.Except
 import           Control.Monad.Identity
 import           Crypto.Number.ModArithmetic as Mod
 import qualified Crypto.Random as CRandom
