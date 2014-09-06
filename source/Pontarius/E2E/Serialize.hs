@@ -18,7 +18,8 @@ import qualified Data.ByteString.Base64 as B64
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Lazy.Builder as BSB
-import           Data.Conduit (($=),($$), ConduitM, await, yield, monadThrow, transPipe)
+import           Control.Monad.Catch (throwM)
+import           Data.Conduit (($=),($$), ConduitM, await, yield, transPipe)
 import qualified Data.Conduit.List as CL
 import           Data.Foldable (foldMap)
 import           Data.List
@@ -306,5 +307,5 @@ readStanzas bs = es >>= mapM (\el -> case unpickle xpStanza' el of
     liftError = transPipe$ \f -> do
         res <- runErrorT f
         case res of
-            Left e -> monadThrow e
+            Left e -> throwM e
             Right r -> return r

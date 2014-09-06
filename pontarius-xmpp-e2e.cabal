@@ -28,8 +28,8 @@ library
                      , Pontarius.E2E.Types
                      , Pontarius.E2E.Message
                      , Pontarius.E2E.Session
-  build-depends:       base
-                     , aeson
+  build-depends:       aeson
+                     , base
                      , base64-bytestring
                      , byteable
                      , bytestring
@@ -43,6 +43,7 @@ library
                      , cryptohash
                      , data-default
                      , either
+                     , exceptions >= 0.6
                      , free
                      , monadcryptorandom
                      , mtl

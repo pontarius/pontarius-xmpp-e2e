@@ -246,15 +246,15 @@ handleE2E policy sess out sta _ = do
     notAllowed = void . out . iqError errNA
     unexpected = void . out . iqError errUR
     conflict   = void . out . iqError errC
-    iqError err (Xmpp.IQRequest iqid f _to l _tp bd) =
-        Xmpp.IQErrorS $ Xmpp.IQError iqid Nothing f l err (Just bd)
+    iqError err (Xmpp.IQRequest iqid f _to l _tp bd _attrs) =
+        Xmpp.IQErrorS $ Xmpp.IQError iqid Nothing f l err (Just bd) []
     errBR = Xmpp.StanzaError Xmpp.Modify Xmpp.BadRequest Nothing Nothing
     errSU = Xmpp.StanzaError Xmpp.Cancel Xmpp.ServiceUnavailable Nothing Nothing
     errNA = Xmpp.StanzaError Xmpp.Cancel Xmpp.NotAllowed Nothing Nothing
     errUR = Xmpp.StanzaError Xmpp.Modify Xmpp.UnexpectedRequest Nothing Nothing
     errC  = Xmpp.StanzaError Xmpp.Cancel Xmpp.Conflict Nothing Nothing
-    result (Xmpp.IQRequest iqid f _to l _tp _bd) e = void . out
-                . Xmpp.IQResultS $ Xmpp.IQResult iqid Nothing f l e
+    result (Xmpp.IQRequest iqid f _to l _tp _bd _atttrs) e = void . out
+                . Xmpp.IQResultS $ Xmpp.IQResult iqid Nothing f l e []
 
 -- | Start an E2E session with peer. This may block indefinitly (because the
 -- other side may have to ask the user whether to accept the session). So it
@@ -307,7 +307,7 @@ startE2E t ctx onSS = maybe (return False) return =<< (runMaybeT $ do
     step s msg xmppSession = do
         Right answer <- liftIO $ Xmpp.sendIQ' Nothing (Just t) Xmpp.Set
                                      Nothing (pickle (xpRoot akeMessageXml) msg)
-                                     xmppSession
+                                     [] xmppSession
         iqr <- case answer of
             IQResponseResult r -> return r
             IQResponseError e -> do
