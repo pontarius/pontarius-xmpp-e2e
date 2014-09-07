@@ -238,9 +238,10 @@ handleE2E policy sess out sta _ = do
                 return Nothing
     endE2E f = do
         let abortE = pickle endSessionMessageXml ()
-        _ <- out $ Xmpp.MessageS Xmpp.message{ Xmpp.messageTo = Just f
-                                        , Xmpp.messagePayload = abortE
-                                        }
+        _ <- out $ Xmpp.MessageErrorS
+                 Xmpp.messageError{ Xmpp.messageErrorTo = Just f
+                                  , Xmpp.messageErrorPayload = abortE
+                                  }
         return ()
     badRequest = void . out . iqError errBR
     serviceUnavailable = void . out . iqError errSU
