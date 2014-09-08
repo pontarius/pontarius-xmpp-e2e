@@ -155,6 +155,7 @@ handleE2E policy sess out sta _ = do
                                     <$> r'
     escape = mzero
     handleAKE iqr msg = void . runMaybeT $ do
+        liftIO $ debugM "Pontarius.Xmpp" "Handling AKE..."
         f <- maybe escape return $ Xmpp.iqRequestFrom iqr
         p <- liftIO (policy f)
         case p of
@@ -162,10 +163,11 @@ handleE2E policy sess out sta _ = do
                 liftIO $ notAllowed iqr
                 escape
             Just False  -> do
+                liftIO $ infoM "Pontarius.Xmpp"
+                     $ "AKE Policy rejection: " ++ show f
                 liftIO $ serviceUnavailable iqr
                 escape
             Just True -> return ()
-
         liftIO $ case msg of
             m@DHCommitMessage{} -> withTMVar (peers sess) $ \sess' -> do
                 case Map.lookup f sess' of
@@ -384,6 +386,7 @@ sendE2EMsg ctx out sta = maybe (return $ Right ()) return =<< ( runMaybeT $ do
                                         }
                     return $ Right ()
                 Right _ -> error "sendDataMessage returned wrong message type"
+                Left (WrongState _) -> out sta >> mzero
                 Left e -> do
                     errorM "Pontarius.Xmpp.E2E" $
                            "Error while encrypting stanza: " ++ show e
