@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE DeriveFunctor #-}
 module Pontarius.E2E.Types
@@ -10,6 +11,7 @@ import           Control.Monad.Free
 import qualified Crypto.Random as CRandom
 import qualified Data.ByteString as BS
 import qualified Data.Map as Map
+import           Data.Text (Text)
 import           Data.Typeable (Typeable)
 import qualified Network.Xmpp as Xmpp
 
@@ -26,10 +28,11 @@ data MsgState = MsgStatePlaintext
               | MsgStateFinished
               deriving (Eq, Show)
 
-data SmpMessaging a = SendSmpMessage SmpMessage (SmpMessaging a)
-                    | RecvSmpMessage Int (SmpMessage -> SmpMessaging a)
-                    | SmpReturn a
-                 deriving Functor
+data SmpMessagingF r = SendSmpMessage SmpMessage r
+                     | RecvSmpMessage Int (SmpMessage -> r)
+                     deriving Functor
+
+type SmpMessaging = Free SmpMessagingF
 
 data ProtocolError = MACFailure
                    | ValueRange -- DH key outside [2, prime - 2]
@@ -57,18 +60,24 @@ data AuthState = AuthStateNone
                | AuthStateAwaitingSig
                  deriving Show
 
-data SmpMessage = SmpMessage1 {g2a, c2, d2, g3a, c3, d3 :: !Integer }
+data SmpMessage = SmpMessage1 { question :: Maybe Text
+                              , g2a, c2, d2, g3a, c3, d3 :: !Integer }
                 | SmpMessage2 {g2b, c2', d2', g3b, c3'
                               , d3' , pb, qb, cp, d5, d6 :: !Integer}
                 | SmpMessage3 {pa, qa, cp', d5, d6, ra, cr, d7 :: !Integer}
                 | SmpMessage4 {rb, cr, d7' :: !Integer}
-                | SmpMessage1Q { question :: BS.ByteString
-                               , g2a, c2, d2, g3a, c3, d3 :: !Integer }
+
 
                   deriving (Show, Eq)
 
+data SmpState = SmpDone
+              | SmpInProgress (SmpMessaging (Either E2EError Bool))
+              | SmpGotChallenge (Text -> (SmpMessaging (Either E2EError Bool)))
+
+
 data E2EState = E2EState { authState        :: !AuthState
                          , msgState         :: !MsgState
+                         , theirPubKey      :: !(Maybe PubKey)
                          , ourKeyID         :: !Integer -- KeyID of ourCurrentKey
                          , ourCurrentKey    :: !DHKeyPair
                          , ourPreviousKey   :: !DHKeyPair
@@ -86,8 +95,7 @@ data E2EState = E2EState { authState        :: !AuthState
                          , counter          :: !Integer
                          , ssid             :: !(Maybe BS.ByteString)
                            -- SMP ------------------------------
-                         , verified         :: !Bool
-                         , smpState         :: !(Maybe (SmpMessaging (Either E2EError Bool)))
+                         , smpState         :: !SmpState
                          }
 
 data MessagePayload = MP { messagePlaintext :: !BS.ByteString
@@ -250,16 +258,18 @@ data E2EContext = E2EContext { peers :: TMVar (Map.Map Xmpp.Jid
 data Run g = Wait (E2EMessage -> Messaging (RunState g))
            | Done (RunState g)
 
-data E2ESession g = E2ESession { sE2eGlobals :: E2EGlobals
-                               , sE2eState :: MVar (Run g)
-                               , sGetSessSecret :: Maybe BS.ByteString
-                                               -> IO BS.ByteString
-                               , sOnSendMessage :: E2EMessage -> IO ()
-                               , sOnStateChange :: MsgState -> IO ()
-                               , sOnSmpAuthChange :: Bool -> IO ()
-                               , sSign :: BS.ByteString -> IO BS.ByteString
-                               , sVerify :: PubKey
-                                            -> BS.ByteString
-                                            -> BS.ByteString
-                                            -> IO Bool
-                               }
+data E2ESession g =
+    E2ESession { sE2eGlobals :: E2EGlobals
+               , sE2eState :: MVar (Run g)
+               , sGetSessSecret :: Maybe BS.ByteString
+                                   -> IO BS.ByteString
+               , sOnSendMessage :: E2EMessage -> IO ()
+               , sOnStateChange :: MsgState -> IO ()
+               , sOnSmpChallenge :: Maybe Text -> IO ()
+               , sOnSmpAuthChange :: Bool -> IO ()
+               , sSign :: BS.ByteString -> IO BS.ByteString
+               , sVerify :: PubKey
+                            -> BS.ByteString
+                            -> BS.ByteString
+                            -> IO Bool
+               }

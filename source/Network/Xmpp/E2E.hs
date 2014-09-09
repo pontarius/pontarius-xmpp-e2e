@@ -12,18 +12,18 @@ module Network.Xmpp.E2E ( e2eInit
                         , sendE2EMsg
 --                        , getSsid
                         , wasEncrypted
-                        , Network.Xmpp.E2E.getKey
+--                        , Network.Xmpp.E2E.getKey
                         , PubKey(..)
                         , E2EGlobals(..)
                         , E2EContext
                         , e2eDefaultParameters
                         ) where
 
-import           Control.Applicative ((<$>))
 import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Exception as Ex
 import           Control.Monad
+import           Control.Monad.Except
 import           Control.Monad.Trans
 import           Control.Monad.Trans.Either
 import           Control.Monad.Trans.Maybe
@@ -31,6 +31,8 @@ import qualified Crypto.Random as CRandom
 import qualified Data.ByteString as BS
 import           Data.List (find)
 import qualified Data.Map as Map
+import           Data.Text (Text)
+import qualified Data.Text as Text
 import           Data.Typeable
 import           Data.XML.Pickle
 import           Data.XML.Types
@@ -42,26 +44,10 @@ import           Pontarius.E2E.Session
 import           Pontarius.E2E.Types
 import           System.Log.Logger
 
-
--- PEM
-import qualified Crypto.Types.PubKey.DSA as DSA
-import           Data.ASN1.BinaryEncoding
-import           Data.ASN1.Encoding
-import           Data.ASN1.Types hiding (Set)
-import qualified Data.ByteString.Lazy as BSL
-import           Data.PEM
-
 import           Pontarius.E2E
 
 
 data Side = Initiator | Responder deriving (Show, Eq)
-
-getKey :: FilePath -> IO (DSA.PublicKey, DSA.PrivateKey)
-getKey keyFile = do
-    Right ((PEM _pName _ bs) : _) <- pemParseLBS `fmap` (BSL.readFile keyFile)
-    let Right keysASN1 = decodeASN1 DER (BSL.fromChunks [bs])
-    let Right (keyPair ::DSA.KeyPair,  _) = fromASN1 keysASN1
-    return (DSA.toPublicKey keyPair, DSA.toPrivateKey keyPair)
 
 withTMVar :: TMVar a -> (a -> IO (a, c)) -> IO c
 withTMVar mv f = Ex.bracketOnError (atomically $ takeTMVar mv)
@@ -148,12 +134,43 @@ handleE2E policy sess out sta _ = do
                     errorM "Pontarius.Xmpp.E2E" $
                               "Reading data message produced error" ++ show e
                     return []
-                Right r' -> do
-                    infoM "Pontarius.Xmpp.E2E" $ "e2e in: " ++ show r
-                    return $ (\st -> ( set from (Just f) st
-                                     , [Annotation $ E2EA "" ]))
-                                    <$> r'
+                Right r' -> liftM concat . forM r' $ \r'' -> do
+                    debugM "Pontarius.Xmpp.E2E" $ "e2e in: " ++ show r''
+                    case r'' of
+                         (Xmpp.MessageS m)
+                             | [el] <- messagePayload m
+                             , nameNamespace (elementName el) == Just smpNs
+                               -> handleSMP m f el >> return []
+                         _ -> return [ (set from (Just f) r''
+                                     , [Annotation $ E2EA "" ])]
+
     escape = mzero
+    handleSMP iqr f el = case unpickle (xpRoot $ xpUnliftElems xpSmpMessage) el of
+        Left e -> do
+            errorM "Pontarius.Xmpp" $ "Could not unpickle SMP message"
+                                      ++ ppUnpickleError e
+            return []
+        Right msg -> atomically (readTMVar $ peers sess) >>= \sess' -> do
+            case Map.lookup f sess' of
+             Nothing -> do
+                 errorM "Pontarius.Xmpp" $ "SMP message for nonexistant ssession"
+                 return []
+             Just s -> do
+                 res <- takeSMPMessage s msg
+                 case res of
+                  Left e -> do
+                      errorM "Pontarius.Xmpp" $ "SMP returned error: "++ show e
+                      return []
+                  Right msgs -> do
+                      forM_ msgs $ \msg -> do
+                          let pl = pickle (xpUnliftElems xpSmpMessage) msg
+                              m = message{ messageTo = Just f
+                                         , messagePayload = pl
+                                         }
+
+                          ctxSendE2EMsg s (Xmpp.MessageS m)  out
+                      return []
+
     handleAKE iqr msg = void . runMaybeT $ do
         liftIO $ debugM "Pontarius.Xmpp" "Handling AKE..."
         f <- maybe escape return $ Xmpp.iqRequestFrom iqr
@@ -342,6 +359,49 @@ startE2E t ctx onSS = maybe (return False) return =<< (runMaybeT $ do
                 mzero
 
 
+withSMP :: MonadIO m =>
+           Jid
+        -> E2EContext
+        -> (  E2ESession CRandom.SystemRNG
+           -> IO (Either E2EError [SmpMessage]))
+        -> m (Either E2EError ())
+withSMP peer ctx f = runExceptT $ do
+    mbCon <- liftIO . atomically $ readTVar (sessRef ctx)
+    con <- case mbCon of
+        Nothing -> throwError $ WrongState "No XMPP connection"
+        Just c -> return c
+    ps <- liftIO $ atomically $ readTMVar (peers ctx)
+    p <- case Map.lookup peer ps of
+        Nothing -> throwError $ WrongState "No session established"
+        Just p' -> return p'
+    res <- liftIO $ f p
+    msgs <- case res of
+        Left e -> throwError e
+        Right msgs' -> return msgs'
+    forM_ msgs $ \msg -> do
+        let pl = pickle (xpUnliftElems xpSmpMessage) msg
+            m = message{ messageTo = Just peer
+                       , messagePayload = pl
+                       }
+        liftIO $ Xmpp.sendMessage m con
+
+
+startSmp :: MonadIO m =>
+            Jid
+         -> Maybe Text
+         -> Text
+         -> E2EContext
+         -> m (Either E2EError ())
+startSmp peer mbQuestion secret ctx =
+    withSMP peer ctx $ initSMP mbQuestion secret
+
+answerChallenge :: MonadIO m =>
+                   Jid
+                -> Text
+                -> E2EContext
+                -> m (Either E2EError ())
+answerChallenge peer secret ctx = withSMP peer ctx $ \s ->
+    respondChallenge s secret
 
 doEndSession :: Jid -> Session -> IO ()
 doEndSession t xmppSession = do
@@ -350,6 +410,28 @@ doEndSession t xmppSession = do
                                       , Xmpp.messagePayload = xml
                                       } xmppSession
     return ()
+
+
+ctxSendE2EMsg :: E2ESession g
+              -> Xmpp.Stanza
+              -> (Xmpp.Stanza -> IO a)
+              -> IO (Either XmppFailure ())
+ctxSendE2EMsg p sta out = do
+    res <- sendDataMessage (renderStanza sta) p
+    case res of
+        Right [E2EDataMessage msg] -> do
+            let xml = pickle dataMessageXml msg
+            _ <- out . Xmpp.MessageS $
+                    Xmpp.message{ Xmpp.messageTo = view to sta
+                                , Xmpp.messagePayload = xml
+                                }
+            return $ Right ()
+        Right _ -> error "sendDataMessage returned wrong message type"
+        Left (WrongState _) -> out sta >> mzero
+        Left e -> do
+            errorM "Pontarius.Xmpp.E2E" $
+                   "Error while encrypting stanza: " ++ show e
+            return $ Left Xmpp.XmppOtherFailure
 
 sendE2EMsg :: MonadIO m =>
               E2EContext

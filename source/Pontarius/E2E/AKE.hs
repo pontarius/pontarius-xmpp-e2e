@@ -162,6 +162,7 @@ checkAndSaveAuthMessage keyType (SM xEncrypted xEncMac) = do
     theirM <- m gy gx theirPID macKey1
     verify theirPID sig theirM
     modify $ \s' -> s'{ theirKeyID = theirKeyID
+                      , theirPubKey = Just theirPID
                       , ssid = Just kdSsid
                       }
 

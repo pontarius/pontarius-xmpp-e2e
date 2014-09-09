@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE RecordWildCards #-}
 module Pontarius.E2E.Session
@@ -14,7 +16,9 @@ module Pontarius.E2E.Session
        -- )
 
        where
-import           Control.Applicative((<$>))
+import qualified Data.Text as Text
+import           Data.Text (Text)
+import           Control.Applicative ((<$>))
 import           Control.Concurrent hiding (yield)
 import           Control.Monad
 import           Control.Monad.Except
@@ -26,11 +30,12 @@ import qualified Crypto.Random as CRandom
 import qualified Data.ByteString as BS
 import           System.Log.Logger
 
-import           Pontarius.E2E.Monad
-import           Pontarius.E2E.Types
+import           Pontarius.E2E.AKE (alice, bob)
 import           Pontarius.E2E.Helpers
 import           Pontarius.E2E.Message
-import           Pontarius.E2E.AKE (alice, bob)
+import           Pontarius.E2E.Monad
+import           Pontarius.E2E.SMP
+import           Pontarius.E2E.Types
 
 newSession :: E2EGlobals
            -> (Maybe BS.ByteString -> IO BS.ByteString)
@@ -96,6 +101,119 @@ withSession session go = modifyMVar (sE2eState session) $ \se -> do
                 (r@(Done Right{}), ms) -> return (r, Right ms)
                 (w@Wait{}, ms) -> return (w, Right ms)
         _ -> return (se, Left $ WrongState "withSession")
+
+withSessionState :: E2ESession g
+                 -> (E2EState
+                     -> g
+                     -> IO ((SmpState, g)
+                           , Either E2EError b))
+                 -> IO (Either E2EError b)
+withSessionState session f = modifyMVar (sE2eState session) $ \se ->
+    case se of
+     Done (Right (s, g)) -> do
+         ((smps', g), res) <- f s g
+         return (Done (Right (s{smpState = smps'}, g)), res)
+     _ -> return (se, Left $ WrongState "withSessionSMP")
+
+advanceSmp :: SmpMessaging t -> (SmpMessaging t, [SmpMessage])
+advanceSmp r@(Pure _) = (r, [])
+advanceSmp (Free (SendSmpMessage msg r)) = (r, [msg])
+advanceSmp r@(Free RecvSmpMessage{} ) = (r, [])
+
+
+runSMP :: E2ESession g
+       -> E2EState
+       -> g
+       -> SmpMessaging (Either E2EError Bool)
+       -> IO ( (SmpState , g)
+             , Either E2EError [SmpMessage])
+runSMP sess s g m = do
+    let (res, msg) = advanceSmp m
+    case res of
+     (Pure (Left e)) -> return ((SmpDone, g)
+                                 , Left e)
+     (Pure (Right ver)) -> do
+         sOnSmpAuthChange sess ver
+         return ( (SmpDone , g)
+                , Right msg
+                )
+     r@(Free RecvSmpMessage{}) -> return ( (SmpInProgress r, g)
+                                         , Right msg
+                                         )
+     (Free (SendSmpMessage msg r)) -> do
+        errorM "Pontarius.Xmpp" "Inconsistent state transition in SMP system"
+        return ( (SmpDone, g)
+               , Left $ WrongState "Inconsistent State transistion")
+
+startSMP :: E2ESession g
+         -> (g -> (SMP Bool, g))
+         -> IO (Either E2EError [SmpMessage])
+startSMP sess m  = withSessionState sess $
+       \s g ->
+       let (m', g') = m g
+       in runSMP sess s g' (execSMP (sE2eGlobals sess) s m')
+
+takeSMPMessage :: CRandom.CPRG g =>
+                  E2ESession g
+               -> SmpMessage
+               -> IO (Either E2EError [SmpMessage])
+takeSMPMessage sess msg@SmpMessage1{question = question} = do
+    sOnSmpChallenge sess question
+    withSessionState sess $ \s g -> do
+        let (exps, g') = runRand g mkExponents
+            st = SmpGotChallenge $
+                 \secret -> execSMP (sE2eGlobals sess) s $ smp2 secret exps msg
+
+        return ((st, g'), Right [])
+takeSMPMessage sess msg = withSessionState sess $ \s g ->
+    case (smpState s) of
+        (SmpInProgress  (Free (RecvSmpMessage n f)))
+            | msgNumber msg == n -> runSMP sess s g (f msg)
+        st -> do
+            errorM "Pontarius.Xmpp" "Received unexpected SMP message"
+            return ((st, g), Left $ WrongState "takeSMPMessage: unexpected message")
+  where
+    msgNumber SmpMessage1{} = 1
+    msgNumber SmpMessage2{} = 2
+    msgNumber SmpMessage3{} = 3
+    msgNumber SmpMessage4{} = 4
+
+respondChallenge :: E2ESession g -> Text -> IO (Either E2EError [SmpMessage])
+respondChallenge sess secret = withSessionState sess $ \s g ->
+    case (smpState s) of
+        (SmpGotChallenge f) -> runSMP sess s g $ f secret
+        st -> return ( (st, g)
+                     , Left $ WrongState "respondChallenge: No challenge was issued")
+
+
+mkExponents :: (MonadRandom g m, CRandom.CPRG g, Functor m) =>
+               m (Integer,
+                  Integer,
+                  Integer,
+                  Integer,
+                  Integer,
+                  Integer,
+                  Integer,
+                  Integer)
+mkExponents = do
+    i1 <- mkSmpExponent
+    i2 <- mkSmpExponent
+    i3 <- mkSmpExponent
+    i4 <- mkSmpExponent
+    i5 <- mkSmpExponent
+    i6 <- mkSmpExponent
+    i7 <- mkSmpExponent
+    i8 <- mkSmpExponent
+    return (i1, i2, i3, i4, i5, i6, i7, i8)
+
+initSMP :: CRandom.CPRG g =>
+           Maybe Text
+        -> Text
+        -> E2ESession g
+        -> IO (Either E2EError [SmpMessage])
+initSMP mbQuestion secret sess = startSMP sess $ \g -> runRand g $ do
+    exps <- mkExponents
+    return $ smp1 mbQuestion secret exps
 
 endSession :: E2ESession CRandom.SystemRNG -> IO ()
 endSession session = modifyMVar_ (sE2eState session) $ \se -> do

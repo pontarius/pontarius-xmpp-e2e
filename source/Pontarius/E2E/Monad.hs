@@ -14,15 +14,23 @@ module Pontarius.E2E.Monad where
 import                           Control.Applicative
 import                           Control.Monad.Except
 import                           Control.Monad.Free
+import                           Control.Monad.Identity
 import                           Control.Monad.Reader
 import                           Control.Monad.State.Strict
 import                           Control.Monad.Trans.State.Strict (liftCatch)
 import qualified "crypto-random" Crypto.Random as CRandom
 import qualified                 Data.ByteString as BS
+
 import                           Pontarius.E2E.Types
+import                           Pontarius.E2E.Serialize (rollInteger)
 
 newtype RandT g m a = RandT { unRandT :: StateT g m a }
                       deriving (Monad, Functor, MonadTrans, Applicative)
+
+type Rand g = RandT g Identity
+
+runRand :: g -> Rand g a -> (a, g)
+runRand g = runIdentity . runRandT g
 
 runRandT :: g -> RandT g m a -> m (a, g)
 runRandT g m = runStateT (unRandT m) g
@@ -54,8 +62,12 @@ instance MonadError e m => MonadError e (RandT g m) where
     throwError = lift . throwError
     catchError m f = RandT $ liftCatch catchError (unRandT m) (unRandT . f)
 
+
 getBytes :: (CRandom.CPRG g, MonadRandom g m) => Int -> m BS.ByteString
 getBytes b = withRandGen $ CRandom.cprgGenerate b
+
+randomIntegerBytes :: (MonadRandom g f, CRandom.CPRG g, Functor f) => Int -> f Integer
+randomIntegerBytes b = rollInteger . BS.unpack <$> getBytes b
 
 data Parameters = Parameters
 
@@ -86,6 +98,22 @@ execE2E globals s0 g = runExceptT
                       . runRandT g
                       . flip runStateT s0
                       . flip runReaderT globals
+
+
+type SMP a = ReaderT E2EGlobals
+             (StateT E2EState
+              (ExceptT E2EError
+               SmpMessaging ))
+             a
+
+execSMP :: E2EGlobals
+        -> E2EState
+        -> SMP a
+        -> SmpMessaging (Either E2EError a)
+execSMP globals s0 = runExceptT
+                     . (liftM fst)
+                     . flip runStateT s0
+                     . flip runReaderT globals
 
 liftMessaging :: MessagingF (Free MessagingF a) -> E2E g a
 liftMessaging = lift . lift . lift . lift . Free

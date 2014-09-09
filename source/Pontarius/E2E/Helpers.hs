@@ -24,29 +24,6 @@ prime = parameter paramDHPrime
 gen :: MonadReader E2EGlobals m => m Integer
 gen = parameter paramDHGenerator
 
-infixr 8 ^.
-(^.) :: (Applicative f, MonadReader E2EGlobals f) =>
-        f Integer -> f Integer -> f Integer
-b ^. e = do Mod.exponantiation_rtl_binary <$> b <*> e <*> prime
-
-infixr 7 *.
-(*.) :: (Applicative f, MonadReader E2EGlobals f) =>
-        f Integer -> f Integer -> f Integer
-x *. y = mulmod <$> x <*> y <*> prime
-  where
-    mulmod x' y' p = (x' * y') `mod` p
-
-infixl 7 /.
--- | modular division by prime
-(/.) :: (Show (m Integer), Applicative m, MonadReader E2EGlobals m) =>
-        m Integer -> m Integer -> m Integer
-x /. y =  do
-    mbi <- Mod.inverse <$> y <*> prime
-    case mbi of
-        Nothing -> error $ "could not invert " ++ show y
-        Just y' -> x *. pure y'
-
-
 -- | Encrypt a ByteString. The IV is padded with 0s to the required length
 encCtr :: MonadReader E2EGlobals m =>
           BS.ByteString -> BS.ByteString -> BS.ByteString -> m BS.ByteString
@@ -117,7 +94,8 @@ makeDHKeyPair =  do
     x <- randomIntegerBits (fromIntegral ks)
     gx <- gen ^. (pure x)
     return $ DHKeyPair gx x
-
+  where
+    b ^. e = do Mod.exponantiation_rtl_binary <$> b <*> e <*> prime
 
 -- randomIntegerBytes :: Int ->Otr Integer
 randomIntegerBits :: (CRandom.CPRG g, MonadRandom g m)
@@ -138,6 +116,7 @@ newState = do
     ndh <- makeDHKeyPair
     return E2EState{ ourPreviousKey   = opk
                    , ourCurrentKey    = ock
+                   , theirPubKey      = Nothing
                    , ourKeyID         = 1
                    , theirCurrentKey  = Nothing
                    , mostRecentKey    = 2
@@ -148,8 +127,7 @@ newState = do
                    , msgState         = MsgStatePlaintext
                    , counter          = 1
                    , ssid             = Nothing
-                   , verified         = False
-                   , smpState         = Nothing
+                   , smpState         = SmpDone
                    }
 
 -- withNewState :: CRandom.CPRG g => E2EGlobals

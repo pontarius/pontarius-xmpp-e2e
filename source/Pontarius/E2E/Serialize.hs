@@ -2,14 +2,12 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
-module Pontarius.E2E.Serialize
-where
+module Pontarius.E2E.Serialize where
 
-import           Control.Applicative ((<$>), (<*>))
+import           Control.Applicative
 import           Control.Exception (SomeException)
 import           Control.Monad
 import           Control.Monad.Except
-import qualified Crypto.PubKey.DSA as DSA
 import           Data.Aeson
 import           Data.Aeson.Types (Parser)
 import           Data.Bits
@@ -97,26 +95,6 @@ encodePubkey (PubKey tp fprint) =
     <> BSB.byteString tp
     <> BSB.byteString fprint
 
---------------------------------------
--- JSON ------------------------------
---------------------------------------
-
-dsaPubKeyFromJson :: Value -> Parser DSA.PublicKey
-dsaPubKeyFromJson = withObject "DSA Public Key" dsaPBFJ
-  where
-    dsaPBFJ  o = DSA.PublicKey <$> paramsFJ o
-                               <*> (b64ToInt =<< o .: "y")
-    paramsFJ o = DSA.Params <$> (b64ToInt =<< o .: "p")
-                            <*> (b64ToInt =<< o .: "g")
-                            <*> (b64ToInt =<< o .: "q")
-
-dsaPubKeyToJson :: DSA.PublicKey -> Value
-dsaPubKeyToJson (DSA.PublicKey (DSA.Params p g q) y)  = object [ "p" .=  intToB64 p
-                                                               , "g" .=  intToB64 g
-                                                               , "q" .=  intToB64 q
-                                                               , "y" .=  intToB64 y
-                                                               ]
-
 instance FromJSON SignatureData where
     parseJSON (Object v) = do
         pubID <- pubKeyIDfromJSON =<< v .: "pubkey"
@@ -170,6 +148,12 @@ e2eNs = "yabasta-ake-1:0"
 
 e2eName :: Text -> Name
 e2eName n = Name n (Just e2eNs) Nothing
+
+smpNs :: Text
+smpNs = "yabasta-smp-1:0"
+
+smpName :: Text -> Name
+smpName n = Name n (Just smpNs) Nothing
 
 liftLeft :: (t -> a) -> Either t b -> Either a b
 liftLeft f  (Left e) = Left (f e)
@@ -233,6 +217,56 @@ akeMessageXml = xpUnliftElems $
                                unSignatureMessage
                                signatureMessageXml
                       ]
+
+smpMessageSelector :: Num a => SmpMessage -> a
+smpMessageSelector SmpMessage1{} = 0
+smpMessageSelector SmpMessage2{} = 1
+smpMessageSelector SmpMessage3{} = 2
+smpMessageSelector SmpMessage4{} = 3
+
+xpSmpMessage1 :: PU [Node] SmpMessage
+xpSmpMessage1 = xpWrap (\(q, (i1, i2, i3, i4, i5, i6))
+                              -> SmpMessage1 q i1 i2 i3 i4 i5 i6)
+                           (\(SmpMessage1 q i1 i2 i3 i4 i5 i6) ->
+                             (q, (i1, i2, i3, i4, i5, i6))) $
+    xpElem (smpName "message1") (xpAttribute' "question" xpId) $
+    xp6Tuple (b64IElem "g2a") (b64IElem "c2") (b64IElem "d3") (b64IElem "g3a")
+             (b64IElem "c3")  (b64IElem "d3")
+
+xpSmpMessage2 :: PU [Node] SmpMessage
+xpSmpMessage2 = xpWrap (\((i1, i2, i3, i4, i5, i6), (i7, i8, i9, i10, i11))
+                              -> SmpMessage2 i1 i2 i3 i4 i5 i6 i7 i8 i9 i10 i11)
+                       (\(SmpMessage2 i1 i2 i3 i4 i5 i6 i7 i8 i9 i10 i11)
+                          -> ((i1, i2, i3, i4, i5, i6), (i7, i8, i9, i10, i11))) $
+    xpElemNodes (smpName "message2")  $
+    xp2Tuple ( xp6Tuple (b64IElem "g2b") (b64IElem "c2'") (b64IElem "d2'")
+                       (b64IElem "g3b") (b64IElem "c3'")  (b64IElem "d3'"))
+            ( xp5Tuple (b64IElem "pb") (b64IElem "qb") (b64IElem "cp")
+                       (b64IElem "d5") (b64IElem "d6"))
+
+xpSmpMessage3 :: PU [Node] SmpMessage
+xpSmpMessage3 = xpWrap (\((i1, i2, i3, i4, i5, i6), (i7, i8))
+                              -> SmpMessage3 i1 i2 i3 i4 i5 i6 i7 i8 )
+                       (\(SmpMessage3 i1 i2 i3 i4 i5 i6 i7 i8 )
+                          -> ((i1, i2, i3, i4, i5, i6), (i7, i8))) $
+    xpElemNodes (smpName "message3")  $
+    xp2Tuple ( xp6Tuple (b64IElem "pa") (b64IElem "qa") (b64IElem "cp'")
+                       (b64IElem "d5") (b64IElem "d6")  (b64IElem "ra"))
+            ( xp2Tuple (b64IElem "cr") (b64IElem "d7"))
+
+xpSmpMessage4 :: PU [Node] SmpMessage
+xpSmpMessage4 = xpWrap (\(i1, i2, i3) -> SmpMessage4 i1 i2 i3)
+                       (\(SmpMessage4 i1 i2 i3) -> (i1, i2, i3)) $
+    xpElemNodes (smpName "message4")  $
+    xp3Tuple (b64IElem "rb") (b64IElem "cr") (b64IElem "d7")
+
+xpSmpMessage :: PU [Node] SmpMessage
+xpSmpMessage = xpChoice smpMessageSelector $
+                  [ xpSmpMessage1
+                  , xpSmpMessage2
+                  , xpSmpMessage3
+                  , xpSmpMessage4
+                  ]
 
 
 endSessionMessageXml :: PU [Element] ()
