@@ -143,7 +143,8 @@ handleE2E policy sess out sta _ = do
                          (Xmpp.MessageS m)
                              | [el] <- messagePayload m
                              , nameNamespace (elementName el) == Just smpNs
-                               -> handleSMP m f el >> return []
+                               -> do forkIO . void $ handleSMP m f el
+                                     return []
                          _ -> return [ (set from (Just f) r''
                                      , [Annotation $ E2EA "" ])]
 
@@ -159,7 +160,9 @@ handleE2E policy sess out sta _ = do
                  errorM "Pontarius.Xmpp" $ "SMP message for nonexistant ssession"
                  return []
              Just s -> do
+                 debugM "Pontarius.Xmpp" "takeSMPMessage"
                  res <- takeSMPMessage s msg
+                 debugM "Pontarius.Xmpp" "done takeSMPMessage"
                  case res of
                   Left e -> do
                       errorM "Pontarius.Xmpp" $ "SMP returned error: "++ show e
