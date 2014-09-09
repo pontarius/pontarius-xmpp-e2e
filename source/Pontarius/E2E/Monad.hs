@@ -121,9 +121,6 @@ liftMessaging = lift . lift . lift . lift . Free
 yield :: BS.ByteString -> E2E g ()
 yield s = liftMessaging $ Yield s (return ())
 
-askSecret :: Maybe BS.ByteString -> E2E g BS.ByteString
-askSecret q =  liftMessaging $ AskSmpSecret q return
-
 recvMessage :: E2E g E2EMessage
 recvMessage = liftMessaging $ RecvMessage return
 

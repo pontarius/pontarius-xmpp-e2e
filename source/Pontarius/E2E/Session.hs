@@ -16,6 +16,7 @@ module Pontarius.E2E.Session
        -- )
 
        where
+import qualified Network.Xmpp as Xmpp
 import qualified Data.Text as Text
 import           Data.Text (Text)
 import           Control.Applicative ((<$>))
@@ -37,26 +38,28 @@ import           Pontarius.E2E.Monad
 import           Pontarius.E2E.SMP
 import           Pontarius.E2E.Types
 
+-- newSession :: E2EGlobals
+--            -> Xmpp.Jid
+
+--            -> (PubKey -> BS.ByteString -> BS.ByteString -> IO Bool)
+--            -> IO (E2ESession CRandom.SystemRNG)
 newSession :: E2EGlobals
-           -> (Maybe BS.ByteString -> IO BS.ByteString)
-           -> (MsgState -> IO ())
-           -> (Bool -> IO ())
-           -> (E2EMessage -> IO ())
-           -> (BS.ByteString -> IO BS.ByteString)
-           -> (PubKey -> BS.ByteString -> BS.ByteString -> IO Bool)
+           -> E2ECallbacks
+           -> Xmpp.Jid
            -> IO (E2ESession CRandom.SystemRNG)
-newSession globals sGen oss osmp sm sign' verify' = do
+newSession globals cb peer = do
     g <- CRandom.cprgCreate <$> CRandom.createEntropyPool :: IO CRandom.SystemRNG
     let (st, g') = runIdentity $ runRandT g $ runReaderT newState globals
     s <- newMVar $ Done $ Right (st, g')
     return E2ESession{ sE2eGlobals      = globals
                      , sE2eState        = s
-                     , sGetSessSecret   = sGen
-                     , sOnSendMessage   = sm
-                     , sOnStateChange   = oss
-                     , sOnSmpAuthChange = osmp
-                     , sSign            = sign'
-                     , sVerify          = verify'
+                     , sOnSendMessage   = onSendMessage   cb peer
+                     , sOnStateChange   = onStateChange   cb peer
+                     , sOnSmpAuthChange = onSmpAuthChange cb peer
+                     , sOnSmpChallenge  = onSmpChallenge  cb peer
+                     , sSign            = cSign cb
+                     , sVerify          = cVerify cb peer
+                     , sPeer            = peer
                      }
 
 advanceMessaging :: E2ESession g
@@ -74,9 +77,7 @@ advanceMessaging s f = do
     go (Free (SendMessage m g)) = tell ([], [m]) >> go g
     go (Free (RecvMessage g)) = return $ Wait g
     go (Free (Yield y g)) = tell ([y], []) >> go g
-    go (Free (AskSmpSecret mbQs g)) = liftIO (sGetSessSecret s mbQs) >>= go . g
     go (Free (StateChange st g)) = liftIO (sOnStateChange s st) >> go g
-    go (Free (SmpAuthenticated a g)) = liftIO (sOnSmpAuthChange s a) >> go g
     go (Free (Log l g)) = liftIO (infoM "Pontarius.Xmpp.E2E" l) >> go g
     go (Free (Sign pt g)) = liftIO (sSign s pt) >>= go . g
     go (Free (Verify pk sig pt g)) = do
@@ -127,7 +128,7 @@ runSMP :: E2ESession g
        -> SmpMessaging (Either E2EError Bool)
        -> IO ( (SmpState , g)
              , Either E2EError [SmpMessage])
-runSMP sess s g m = do
+runSMP sess _s g m = do
     let (res, msg) = advanceSmp m
     case res of
      (Pure (Left e)) -> return ((SmpDone, g)
@@ -140,7 +141,7 @@ runSMP sess s g m = do
      r@(Free RecvSmpMessage{}) -> return ( (SmpInProgress r, g)
                                          , Right msg
                                          )
-     (Free (SendSmpMessage msg r)) -> do
+     (Free SendSmpMessage{}) -> do
         errorM "Pontarius.Xmpp" "Inconsistent state transition in SMP system"
         return ( (SmpDone, g)
                , Left $ WrongState "Inconsistent State transistion")

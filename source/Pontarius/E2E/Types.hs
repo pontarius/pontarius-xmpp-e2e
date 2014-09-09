@@ -209,9 +209,7 @@ data E2EMessage = E2EAkeMessage {unE2EAkeMessage ::  !E2EAkeMessage}
 data MessagingF a = SendMessage !E2EMessage a
                   | RecvMessage (E2EMessage -> a)
                   | Yield !BS.ByteString a
-                  | AskSmpSecret !(Maybe BS.ByteString) (BS.ByteString -> a)
                   | StateChange !MsgState a
-                  | SmpAuthenticated !Bool a
                   | Log !String a
                   | Sign !BS.ByteString (BS.ByteString -> a)
                   | Verify !PubKey        -- | Public key
@@ -226,9 +224,7 @@ instance Show a => Show (MessagingF a) where
     show (SendMessage msg f) = "SendMessage{" ++ show msg ++ "}> " ++ show f
     show (RecvMessage _) = "RecvMsg(...)"
     show (Yield y f) = "Yield{" ++ show y ++ "}> " ++ show f
-    show (AskSmpSecret q _) = "AskSmpSecret{" ++ show q ++ "}(..)"
     show (StateChange st f) = "StateChange{" ++ show st ++ "}> " ++ show f
-    show (SmpAuthenticated b f) = "SmpAuthenticated{" ++ show b ++ "}> " ++ show f
     show (Log l f) = "Log{" ++ show l ++ "}> " ++ show f
     show (Sign bs _) = "Sign{" ++ show bs ++ "}(...) "
     show (Verify pkid plain sig f) = concat $
@@ -242,18 +238,25 @@ instance Show a => Show (MessagingF a) where
 
 type RunState g = Either E2EError (E2EState, g)
 
-data E2EContext = E2EContext { peers :: TMVar (Map.Map Xmpp.Jid
-                                                 (E2ESession CRandom.SystemRNG))
-                             , sessRef :: TVar (Maybe Xmpp.Session)
-                             , globals :: E2EGlobals
-                             , getCtxSecret :: Maybe BS.ByteString
-                                            -> IO BS.ByteString
-                             , cSign :: BS.ByteString -> IO BS.ByteString
-                             , cVerify :: PubKey
-                                       -> BS.ByteString
-                                       -> BS.ByteString
-                                       -> IO Bool
-                             }
+data E2ECallbacks = E2EC { onSendMessage :: Xmpp.Jid -> E2EMessage -> IO ()
+                         , onStateChange :: Xmpp.Jid -> MsgState -> IO ()
+                         , onSmpChallenge :: Xmpp.Jid -> Maybe Text -> IO ()
+                         , onSmpAuthChange :: Xmpp.Jid -> Bool -> IO ()
+                         , cSign :: BS.ByteString -> IO BS.ByteString
+                         , cVerify :: Xmpp.Jid
+                                   -> PubKey
+                                   -> BS.ByteString
+                                   -> BS.ByteString
+                                   -> IO Bool
+                         }
+
+data E2EContext =
+    E2EContext { peers :: TMVar (Map.Map Xmpp.Jid
+                                 (E2ESession CRandom.SystemRNG))
+               , sessRef :: TVar (Maybe Xmpp.Session)
+               , globals :: E2EGlobals
+               , callbacks :: E2ECallbacks
+               }
 
 data Run g = Wait (E2EMessage -> Messaging (RunState g))
            | Done (RunState g)
@@ -261,15 +264,14 @@ data Run g = Wait (E2EMessage -> Messaging (RunState g))
 data E2ESession g =
     E2ESession { sE2eGlobals :: E2EGlobals
                , sE2eState :: MVar (Run g)
-               , sGetSessSecret :: Maybe BS.ByteString
-                                   -> IO BS.ByteString
-               , sOnSendMessage :: E2EMessage -> IO ()
-               , sOnStateChange :: MsgState -> IO ()
-               , sOnSmpChallenge :: Maybe Text -> IO ()
-               , sOnSmpAuthChange :: Bool -> IO ()
                , sSign :: BS.ByteString -> IO BS.ByteString
                , sVerify :: PubKey
                             -> BS.ByteString
                             -> BS.ByteString
                             -> IO Bool
+               , sOnSendMessage :: E2EMessage -> IO ()
+               , sOnStateChange :: MsgState -> IO ()
+               , sOnSmpChallenge :: Maybe Text -> IO ()
+               , sOnSmpAuthChange :: Bool -> IO ()
+               , sPeer :: Xmpp.Jid
                }

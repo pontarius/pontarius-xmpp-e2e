@@ -17,6 +17,8 @@ module Network.Xmpp.E2E ( e2eInit
                         , E2EGlobals(..)
                         , E2EContext
                         , e2eDefaultParameters
+                        , startSMP
+                        , answerChallenge
                         ) where
 
 import           Control.Concurrent
@@ -231,15 +233,7 @@ handleE2E policy sess out sta _ = do
                 unexpected iqr
                 return ()
     startSession iqr f m = do
-        s <- newSession (globals sess) -- globals
-                        (getCtxSecret sess) -- get secret
-                        (\_ -> return ()) -- change of message state
-                        (\_ -> return ()) -- change of auth state
-                        (\_ -> return ()) -- send message
-                        (cSign sess)            -- sign
-                        (cVerify sess) -- verify
-
-
+        s <- newSession (globals sess) (callbacks sess) f -- globals
         _ <- startAke s responder
         res <- takeAkeMessage s m
         case res of
@@ -283,9 +277,8 @@ handleE2E policy sess out sta _ = do
 startE2E :: MonadIO m =>
             Jid
          -> E2EContext
-         -> (MsgState -> IO ())
          -> m Bool
-startE2E t ctx onSS = maybe (return False) return =<< (runMaybeT $ do
+startE2E t ctx = maybe (return False) return =<< (runMaybeT $ do
     mbSess <- liftIO . atomically . readTVar $ sessRef ctx
     xmppSession <- case mbSess of
         Nothing -> mzero
@@ -296,15 +289,14 @@ startE2E t ctx onSS = maybe (return False) return =<< (runMaybeT $ do
             Nothing -> return ()
 
             Just _s -> doEndSession t xmppSession
-        s <- newSession (globals ctx) (getCtxSecret ctx) onSS
-                    (\_ -> return ()) (\_ -> return ()) (cSign ctx) (cVerify ctx)
+        s <- newSession (globals ctx) (callbacks ctx) t
         let sess' = Map.insert t s sess
         return (sess', s)
     liftIO . Ex.handle (\e -> do -- handle asyncronous exceptions
                     doEndSession t xmppSession
                     withTMVar (peers ctx) $
                         \s' -> return (Map.delete t s', ())
-                    onSS MsgStatePlaintext
+                    onStateChange (callbacks ctx) t MsgStatePlaintext
                     Ex.throw (e :: SomeException)
               ) $ do
         Right [E2EAkeMessage msg1] <- startAke s initiator
@@ -316,7 +308,7 @@ startE2E t ctx onSS = maybe (return False) return =<< (runMaybeT $ do
             Nothing -> do
                 doEndSession t xmppSession
                 withTMVar (peers ctx) $ \s' -> return (Map.delete t s', ())
-                onSS MsgStatePlaintext
+                onStateChange (callbacks ctx) t MsgStatePlaintext
                 return False
             Just _ -> return True
     )
@@ -485,14 +477,16 @@ wasEncrypted = maybe False (const True) . getSsid
 
 e2eInit :: E2EGlobals
         -> (Jid -> IO (Maybe Bool))
-        -> (Maybe BS.ByteString -> IO BS.ByteString)
-        -> (BS.ByteString -> IO BS.ByteString)
-        -> (PubKey -> BS.ByteString -> BS.ByteString -> IO Bool)
+        -> E2ECallbacks
         -> IO (E2EContext, Plugin)
-e2eInit gs policy sGen sign verify = do
+e2eInit gs policy cb = do
     sRef <- newTVarIO Nothing
     ps <- newTMVarIO Map.empty
-    let sess = E2EContext ps sRef gs sGen sign verify
+    let sess = E2EContext{ peers = ps
+                         , sessRef = sRef
+                         , globals = gs
+                         , callbacks = cb
+                         }
     let plugin out = do
             return Xmpp.Plugin' { Xmpp.inHandler = handleE2E policy sess out
                                 , Xmpp.outHandler = sendE2EMsg sess out
