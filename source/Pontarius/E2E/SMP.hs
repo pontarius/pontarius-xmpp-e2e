@@ -111,9 +111,12 @@ smp1 mbQuestion x' (a2, a3, r2, r3, r4, r5, r6, r7) = do
     q <- getQ
     p <- prime
     x <- mkSecret id (Text.encodeUtf8 x')
-    let b ^. e = Mod.exponantiation_rtl_binary b e p
+    let infixr 8 ^.
+        b ^. e = Mod.exponantiation_rtl_binary b e p
+        infixr 7 *.
         l *. r = mulmod l r p
         mulmod l r m = (l * r) `mod` m
+        infixl 7 /.
         l /. r = case inverse r p of
             Nothing -> error $ "could not invert " ++ show r
             Just r' -> l *. r'
@@ -170,9 +173,12 @@ smp2 y' (b2, b3, r2, r3, r4, r5, r6, r7) msg1 = do
     q <- getQ
     p <- prime
     y <- mkSecret (\(x,y) -> (y,x)) (Text.encodeUtf8 y')
-    let b ^. e = Mod.exponantiation_rtl_binary b e p
+    let infixr 8 ^.
+        b ^. e = Mod.exponantiation_rtl_binary b e p
+        infixr 7 *.
         x *. y = mulmod x y p
         mulmod x' y' p = (x' * y') `mod` p
+        infixl 7 /.
         x /. y = case inverse y p of
             Nothing -> error $ "could not invert " ++ show y
             Just y' -> x *. y'
@@ -180,8 +186,8 @@ smp2 y' (b2, b3, r2, r3, r4, r5, r6, r7) msg1 = do
     let SmpMessage1 _ g2a' c2' d2' g3a' c3' d3' = msg1
     rangeGuard "bob g2a'" g2a'
     rangeGuard "bob gaa'" g3a'
-    hashGuard "bob c2'" c2' 1 (2 ^. d2' *. g2a' ^. c2') Nothing
-    hashGuard "bob c3'" c3' 2 (2 ^. d3' *. g3a' ^. c3') Nothing
+    hashGuard "bob c2'" c2' 1 ((2 ^. d2') *. (g2a' ^. c2')) Nothing
+    hashGuard "bob c3'" c3' 2 ((2 ^. d3') *. (g3a' ^. c3')) Nothing
     -- [b2, b3, r2, r3, r4, r5, r6] <- replicateM 7 mkSmpExponent
     let g2b = 2 ^. b2
         g3b = 2 ^. b3
