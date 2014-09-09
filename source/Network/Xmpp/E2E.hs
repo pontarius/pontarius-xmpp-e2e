@@ -136,6 +136,8 @@ handleE2E policy sess out sta _ = do
                 Left e -> do
                     errorM "Pontarius.Xmpp.E2E" $
                               "Reading data message produced error" ++ show e
+                               ++ " in \n" ++ show r
+
                     return []
                 Right r' -> liftM concat . forM r' $ \r'' -> do
                     debugM "Pontarius.Xmpp.E2E" $ "e2e in: " ++ show r''

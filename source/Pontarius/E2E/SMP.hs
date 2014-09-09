@@ -186,8 +186,8 @@ smp2 y' (b2, b3, r2, r3, r4, r5, r6, r7) msg1 = do
     let SmpMessage1 _ g2a' c2' d2' g3a' c3' d3' = msg1
     rangeGuard "bob g2a'" g2a'
     rangeGuard "bob gaa'" g3a'
-    hashGuard "bob c2'" c2' 1 ((2 ^. d2') *. (g2a' ^. c2')) Nothing
-    hashGuard "bob c3'" c3' 2 ((2 ^. d3') *. (g3a' ^. c3')) Nothing
+    hashGuard "bob c2'" c2' 1 (2 ^. d2' *. g2a' ^. c2') Nothing
+    hashGuard "bob c3'" c3' 2 (2 ^. d3' *. g3a' ^. c3') Nothing
     -- [b2, b3, r2, r3, r4, r5, r6] <- replicateM 7 mkSmpExponent
     let g2b = 2 ^. b2
         g3b = 2 ^. b3
