@@ -28,6 +28,7 @@ library
                      , Pontarius.E2E.Types
                      , Pontarius.E2E.Message
                      , Pontarius.E2E.Session
+                     , Pontarius.E2E.SMP
   build-depends:       aeson
                      , base
                      , base64-bytestring

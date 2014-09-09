@@ -15,9 +15,10 @@ module Network.Xmpp.E2E ( e2eInit
 --                        , Network.Xmpp.E2E.getKey
                         , PubKey(..)
                         , E2EGlobals(..)
+                        , E2ECallbacks(..)
                         , E2EContext
                         , e2eDefaultParameters
-                        , startSMP
+                        , startSmp
                         , answerChallenge
                         ) where
 
