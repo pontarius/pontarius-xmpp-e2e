@@ -239,8 +239,8 @@ xpSmpMessage2 = xpWrap (\((i1, i2, i3, i4, i5, i6), (i7, i8, i9, i10, i11))
                        (\(SmpMessage2 i1 i2 i3 i4 i5 i6 i7 i8 i9 i10 i11)
                           -> ((i1, i2, i3, i4, i5, i6), (i7, i8, i9, i10, i11))) $
     xpElemNodes (smpName "message2")  $
-    xp2Tuple ( xp6Tuple (b64IElem "g2b") (b64IElem "c2'") (b64IElem "d2'")
-                       (b64IElem "g3b") (b64IElem "c3'")  (b64IElem "d3'"))
+    xp2Tuple ( xp6Tuple (b64IElem "g2b") (b64IElem "c2p") (b64IElem "d2p")
+                       (b64IElem "g3b") (b64IElem "c3p")  (b64IElem "d3p"))
             ( xp5Tuple (b64IElem "pb") (b64IElem "qb") (b64IElem "cp")
                        (b64IElem "d5") (b64IElem "d6"))
 
@@ -250,9 +250,9 @@ xpSmpMessage3 = xpWrap (\((i1, i2, i3, i4, i5, i6), (i7, i8))
                        (\(SmpMessage3 i1 i2 i3 i4 i5 i6 i7 i8 )
                           -> ((i1, i2, i3, i4, i5, i6), (i7, i8))) $
     xpElemNodes (smpName "message3")  $
-    xp2Tuple ( xp6Tuple (b64IElem "pa") (b64IElem "qa") (b64IElem "cp'")
+    xp2Tuple ( xp6Tuple (b64IElem "pa") (b64IElem "qa") (b64IElem "cpp")
                        (b64IElem "d5") (b64IElem "d6")  (b64IElem "ra"))
-            ( xp2Tuple (b64IElem "cr") (b64IElem "d7"))
+            ( xp2Tuple (b64IElem "cr") (b64IElem "d7p"))
 
 xpSmpMessage4 :: PU [Node] SmpMessage
 xpSmpMessage4 = xpWrap (\(i1, i2, i3) -> SmpMessage4 i1 i2 i3)
