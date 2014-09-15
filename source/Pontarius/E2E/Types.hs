@@ -188,7 +188,7 @@ data E2EGlobals = E2EG { parameters :: !E2EParameters
                        }
 
 data PubKey = PubKey { pubKeyType :: !BS.ByteString
-                     , pubKeyIdent :: !BS.ByteString
+                     , pubKeyData :: !BS.ByteString
                      } deriving (Eq, Ord, Show, Typeable)
 
 

@@ -6,32 +6,27 @@ module Pontarius.E2E.Serialize where
 
 import           Control.Applicative
 import           Control.Exception (SomeException)
-import           Control.Monad
+import           Control.Monad.Catch (throwM)
 import           Control.Monad.Except
-import           Data.Aeson
-import           Data.Aeson.Types (Parser)
 import           Data.Bits
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base64 as B64
 import qualified Data.ByteString.Char8 as BS8
-import qualified Data.ByteString.Lazy as BSL
-import qualified Data.ByteString.Lazy.Builder as BSB
-import           Control.Monad.Catch (throwM)
 import           Data.Conduit (($=),($$), ConduitM, await, yield, transPipe)
 import qualified Data.Conduit.List as CL
-import           Data.Foldable (foldMap)
 import           Data.List
-import           Data.Monoid
+import           Data.Serialize
 import           Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 import           Data.Word
 import           Data.XML.Pickle
 import           Data.XML.Types
-import           Network.Xmpp.Internal (xpStanza, elements, renderElement, Stanza)
 import           Network.Xmpp (XmppFailure)
+import           Network.Xmpp.Internal (xpStanza, elements, renderElement, Stanza)
 import           Pontarius.E2E.Types
 import           Text.XML.Stream.Parse
+
 
 -- Binary encodings
 ------------------------------
@@ -52,92 +47,48 @@ encodeInteger = BS.pack . unrollInteger
 decodeInteger :: BS.ByteString -> Integer
 decodeInteger = rollInteger . BS.unpack
 
+putMPI :: Integer -> PutM ()
+putMPI = putData . encodeInteger
 
-intToB64BS :: Integer -> BS.ByteString
-intToB64BS = B64.encode . encodeInteger
-
-intToB64 :: Integer -> Text
-intToB64 = Text.decodeUtf8 . intToB64BS
-
-b64ToInt :: Text -> Parser Integer
-b64ToInt b64 = do
-    Right bs <- return . B64.decode . Text.encodeUtf8 $ b64
-    return . decodeInteger $ bs
-
-bsToB64 :: BS8.ByteString -> Text
-bsToB64 = Text.decodeUtf8 . B64.encode
-
-b64ToBS :: Text -> Either String BS8.ByteString
-b64ToBS = B64.decode . Text.encodeUtf8
-
-toMPIBuilder :: Integer -> BSB.Builder
-toMPIBuilder i = let bs = unrollInteger i in BSB.word32BE
-                                               (fromIntegral $ length bs)
-                                             <> (BSB.word8 `foldMap` bs)
+getMPI :: Get Integer
+getMPI = decodeInteger <$> getData
 
 -- | Encode data message for MAC
 encodeMessageBytes :: DataMessage -> BS.ByteString
-encodeMessageBytes msg = BS.concat . BSL.toChunks . BSB.toLazyByteString $
-                           foldMap toMPIBuilder [ senderKeyID msg
-                                                , recipientKeyID msg
-                                                , nextDHy msg
-                                                ]
-                           <> BSB.word32BE (fromIntegral . BS.length
-                                                     $ ctrHi msg)
-                           <> BSB.byteString (ctrHi msg)
-                           <> BSB.word32BE (fromIntegral . BS.length
-                                                     $ messageEnc msg)
-                           <> BSB.byteString (messageEnc msg)
+encodeMessageBytes msg = runPut $ do
+    putMPI $ senderKeyID msg
+    putMPI $ recipientKeyID msg
+    putMPI $ nextDHy msg
+    putData $ ctrHi msg
+    putData $ messageEnc msg
 
-encodePubkey :: PubKey -> BSB.Builder
-encodePubkey (PubKey tp fprint) =
-    BSB.word32BE (fromIntegral $ BS.length tp)
-    <> BSB.byteString tp
-    <> BSB.byteString fprint
+putData :: BS8.ByteString -> PutM ()
+putData bs = do
+    putWord32be . fromIntegral $ BS.length bs
+    putByteString bs
 
-instance FromJSON SignatureData where
-    parseJSON (Object v) = do
-        pubID <- pubKeyIDfromJSON =<< v .: "pubkey"
-        kid <- v .: "keyID"
-        B64BS sig <- v .: "signature"
-        return $ SD pubID kid sig
-    parseJSON _ = mzero
+getData :: Get BS8.ByteString
+getData = do
+    ln <- getWord32be
+    getByteString (fromIntegral ln)
 
-newtype B64BS = B64BS {unB64BS :: BS.ByteString} deriving (Show, Eq)
+putPubkey :: PubKey -> PutM ()
+putPubkey (PubKey tp' dt) = do
+    putData tp'
+    putData dt
 
-instance ToJSON B64BS where
-    toJSON = toJSON . Text.decodeUtf8 . B64.encode . unB64BS
+encodePubkey :: PubKey -> BS.ByteString
+encodePubkey = runPut . putPubkey
 
-instance FromJSON B64BS where
-    parseJSON v = do
-        mbb64 <- B64.decode . Text.encodeUtf8 <$> parseJSON v
-        case mbb64 of
-            Left _e -> mzero
-            Right bs -> return $ B64BS bs
+getPubKey :: Get PubKey
+getPubKey = PubKey <$> getData <*> getData
 
-pubKeytoJSON :: PubKey -> Value
-pubKeytoJSON (PubKey tp fprint) = object [ "type" .= B64BS tp
-                                         , "fingerprint" .= B64BS fprint
-                                         ]
-
-pubKeyIDfromJSON :: Value -> Parser PubKey
-pubKeyIDfromJSON (Object v) = do
-    B64BS tpString <- v .: "type"
-    B64BS fprint <- v   .: "fingerprint"
-    return $ PubKey tpString fprint
-pubKeyIDfromJSON _ = mzero
-
-instance ToJSON SignatureData where
-    toJSON SD{..} = object [ "pubkey"    .= pubKeytoJSON sdPubKey
-                           , "keyID"     .= sdKeyID
-                           , "signature" .= B64BS sdSig
-                           ]
-
--- See Issue 142 in AESON: https://github.com/bos/aeson/issues/142
-jsonDecode :: (MonadError E2EError m, FromJSON a) => BS8.ByteString -> m a
-jsonDecode d = case eitherDecode' (BSL.fromChunks [d]) of
-    Right x -> return x
-    Left e -> throwError $ ProtocolError (DeserializationError $ BS8.unpack d) e
+instance Serialize SignatureData where
+    put sd = do
+        putPubkey (sdPubKey sd)
+        putMPI $ sdKeyID sd
+        putData $ sdSig sd
+    get = SD <$> getPubKey <*> getMPI <*> getData
 
 ---------------------------
 -- XML --------------------

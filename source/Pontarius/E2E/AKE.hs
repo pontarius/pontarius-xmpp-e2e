@@ -7,16 +7,12 @@ import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Control.Monad.State
 import qualified Crypto.Random as CRandom
-import           Data.Aeson
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as BSL
-import qualified Data.ByteString.Lazy.Builder as BSB
-import           Data.Foldable (foldMap)
-import           Data.Monoid
+import           Data.Serialize (decode, encode, runPut)
+import           Pontarius.E2E.Helpers
 import           Pontarius.E2E.Monad
 import           Pontarius.E2E.Serialize
 import           Pontarius.E2E.Types
-import           Pontarius.E2E.Helpers
 
 -------------------------------------
 -- The high level protocol ----------
@@ -158,7 +154,10 @@ checkAndSaveAuthMessage keyType (SM xEncrypted xEncMac) = do
     xEncMac' <- mac macKey2 xEncrypted
     protocolGuard MACFailure "auth message" $ (xEncMac' =~= xEncMac)
     xDec <- decCtrZero cryptKey xEncrypted
-    SD theirPID theirKeyID sig <- jsonDecode xDec
+    SD theirPID theirKeyID sig <- case decode xDec of
+        Left e -> throwError $ ProtocolError (DeserializationError e)
+                                             "signature data"
+        Right r -> return r
     theirM <- m gy gx theirPID macKey1
     verify theirPID sig theirM
     modify $ \s' -> s'{ theirKeyID = theirKeyID
@@ -173,9 +172,10 @@ m :: MonadReader E2EGlobals m
      -> BS.ByteString
      -> m BS.ByteString
 m ours theirs pubKey messageAuthKey = do
-    let m' = BS.concat . BSL.toChunks . BSB.toLazyByteString $
-             foldMap toMPIBuilder [ ours , theirs]
-             <> encodePubkey pubKey
+    let m' = runPut $ do
+            putMPI ours
+            putMPI theirs
+            putPubkey pubKey
     mac messageAuthKey m'
 
 xs :: PubKey
@@ -189,7 +189,7 @@ xs pub kid sig aesKey macKey = do
                , sdKeyID = kid
                , sdSig   = sig
                }
-    let x = BS.concat . BSL.toChunks $ encode sd
+    let x = encode sd
     xEncrypted <- encCtrZero aesKey x
     xMac <- mac macKey xEncrypted
     return (xEncrypted, xMac)

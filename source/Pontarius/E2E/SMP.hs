@@ -3,7 +3,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Pontarius.E2E.SMP where
 
-import           Control.Monad
 import           Control.Monad.Except
 import           Control.Monad.Free
 import           Control.Monad.Reader
@@ -13,8 +12,6 @@ import           Crypto.Number.ModArithmetic as Mod
 import qualified Crypto.Random as CRandom
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Builder as BS
-import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Serialize as Serialize
 import           Data.Text (Text)
 import qualified Data.Text.Encoding as Text
@@ -25,32 +22,13 @@ import           Pontarius.E2E.Types
 import           Pontarius.E2E.Helpers
 import           Pontarius.E2E.Serialize
 
-newtype MPI = MPI {unMPI :: Integer } deriving (Show, Eq)
-
-putMPI :: MPI -> Serialize.PutM ()
-putMPI (MPI i)  = do
-    let bytes = unrollInteger i
-    Serialize.putWord32be (fromIntegral $ length bytes)
-    mapM_ Serialize.putWord8 bytes
-    return ()
-
-getMPI :: Serialize.Get MPI
-getMPI = do
-  mpiLength <- Serialize.getWord32be
-  mpiData <- replicateM (fromIntegral mpiLength) Serialize.getWord8
-  return . MPI . rollInteger $ mpiData
-
-instance Serialize.Serialize MPI where
-    put = putMPI
-    get = getMPI
-
 smpHash :: Word8 -> Integer -> Maybe Integer -> Integer
 smpHash v b1 b2 = rollInteger . BS.unpack . SHA256.hash . Serialize.runPut $ do
         Serialize.putWord8 v
-        putMPI $ MPI b1
+        putMPI b1
         case b2 of
             Nothing -> return ()
-            Just b2' -> putMPI $ MPI b2'
+            Just b2' -> putMPI b2'
 
 mkSmpExponent :: (CRandom.CPRG g, MonadRandom g m, Functor m) => m Integer
 mkSmpExponent = randomIntegerBytes 192
@@ -70,7 +48,7 @@ mkSecret perm uSecret = do
             Serialize.putByteString uSecret
     return . rollInteger . BS.unpack $ SHA256.hash sBytes
   where
-    fingerPrint = SHA256.hash . BSL.toStrict . BS.toLazyByteString . encodePubkey
+    fingerPrint = SHA256.hash . encodePubkey
 
 getQ :: MonadReader E2EGlobals m => m Integer
 getQ = do
