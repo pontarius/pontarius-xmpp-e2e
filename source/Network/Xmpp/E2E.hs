@@ -22,6 +22,8 @@ module Network.Xmpp.E2E ( e2eInit
                         , e2eDefaultParameters
                         , startSmp
                         , answerChallenge
+                        , SessionState(..)
+                        , getSessionState
                         ) where
 
 import           Control.Applicative
