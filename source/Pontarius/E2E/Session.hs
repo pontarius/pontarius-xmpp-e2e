@@ -16,11 +16,12 @@ module Pontarius.E2E.Session
        -- )
 
        where
+import qualified Control.Exception as Ex
+import qualified Data.Map as Map
+import           Control.Concurrent.STM
 import qualified Network.Xmpp as Xmpp
-import qualified Data.Text as Text
 import           Data.Text (Text)
 import           Control.Applicative ((<$>))
-import           Control.Concurrent hiding (yield)
 import           Control.Monad
 import           Control.Monad.Except
 import           Control.Monad.Free
@@ -50,7 +51,7 @@ newSession :: E2EGlobals
 newSession globals cb peer = do
     g <- CRandom.cprgCreate <$> CRandom.createEntropyPool :: IO CRandom.SystemRNG
     let (st, g') = runIdentity $ runRandT g $ runReaderT newState globals
-    s <- newMVar $ Done $ Right (st, g')
+    s <- newTMVarIO $ Done $ Right (st, g')
     return E2ESession{ sE2eGlobals      = globals
                      , sE2eState        = s
                      , sOnSendMessage   = onSendMessage   cb peer
@@ -89,11 +90,19 @@ advanceMessaging s f = do
                 return . Done .Left $ ProtocolError SignatureMismatch ""
     go (Pure a) = return $ Done a
 
+modifyTMVar :: TMVar a -> (a -> IO (a, c)) -> IO c
+modifyTMVar tmvar m =
+    Ex.bracketOnError (atomically $ takeTMVar tmvar)
+                      (atomically . putTMVar tmvar )
+                      (\x -> do
+                            (x', y) <- m x
+                            atomically $ putTMVar tmvar x'
+                            return y)
 
 withSession :: E2ESession g
             -> E2E g ()
             -> IO (Either E2EError ([BS.ByteString], [E2EMessage]))
-withSession session go = modifyMVar (sE2eState session) $ \se -> do
+withSession session go = modifyTMVar (sE2eState session) $ \se -> do
     case se of
         Done (Right (s, g)) -> do
             res <- advanceMessaging session $ execE2E (sE2eGlobals session) s g go
@@ -103,17 +112,18 @@ withSession session go = modifyMVar (sE2eState session) $ \se -> do
                 (w@Wait{}, ms) -> return (w, Right ms)
         _ -> return (se, Left $ WrongState "withSession")
 
+
 withSessionState :: E2ESession g
                  -> (E2EState
                      -> g
                      -> IO ((SmpState, g)
                            , Either E2EError b))
                  -> IO (Either E2EError b)
-withSessionState session f = modifyMVar (sE2eState session) $ \se ->
+withSessionState session f = modifyTMVar (sE2eState session) $ \se ->
     case se of
      Done (Right (s, g)) -> do
-         ((smps', g), res) <- f s g
-         return (Done (Right (s{smpState = smps'}, g)), res)
+         ((smps', g'), res) <- f s g
+         return (Done (Right (s{smpState = smps'}, g')), res)
      _ -> return (se, Left $ WrongState "withSessionSMP")
 
 advanceSmp :: SmpMessaging t -> (SmpMessaging t, [SmpMessage])
@@ -217,7 +227,7 @@ initSMP mbQuestion secret sess = startSMP sess $ \g -> runRand g $ do
     return $ smp1 mbQuestion secret exps
 
 endSession :: E2ESession CRandom.SystemRNG -> IO ()
-endSession session = modifyMVar_ (sE2eState session) $ \se -> do
+endSession session = modifyTMVar_ (sE2eState session) $ \se -> do
     p <- case se of
         Wait _ -> do
             sOnSendMessage session E2EEndSessionMessage
@@ -231,6 +241,8 @@ endSession session = modifyMVar_ (sE2eState session) $ \se -> do
                                                        (sE2eGlobals session)
         return . Done $ Right s'
         else return se
+  where
+    modifyTMVar_ tmv m = modifyTMVar tmv (m >=> \x -> return (x, ()))
 
 startAke :: E2ESession CRandom.SystemRNG
          -> E2E CRandom.SystemRNG ()
@@ -273,7 +285,7 @@ takeMessage :: CRandom.CPRG g =>
                E2ESession g
             -> E2EMessage
             -> IO (Either E2EError ([BS.ByteString], [E2EMessage]))
-takeMessage sess msg = modifyMVar (sE2eState sess) $ \rs -> do
+takeMessage sess msg = modifyTMVar (sE2eState sess) $ \rs -> do
     let r = case rs of
             -- There's no suspended computation, so we can start a new one
             Done (Right (st, g)) -> case msg of
@@ -295,3 +307,21 @@ initiator = alice
 
 responder :: CRandom.CPRG g => E2E g ()
 responder = bob
+
+data SessionState = AkeRunning
+                  | NotAuthenticated
+                  | AkeError E2EError
+                  | Authenticated E2EState
+                    deriving (Show)
+
+getSessionState :: Xmpp.Jid -> E2EContext -> STM SessionState
+getSessionState peer ctx = do
+    ps <- readTMVar $ peers ctx
+    case Map.lookup peer ps of
+        Nothing -> return NotAuthenticated
+        Just sess -> do
+            st <- readTMVar $ sE2eState sess
+            case st of
+                 Wait{} -> return AkeRunning
+                 Done (Left e) -> return $ AkeError e
+                 Done (Right (s, _)) -> return $ Authenticated s

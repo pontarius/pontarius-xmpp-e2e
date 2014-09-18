@@ -1,6 +1,11 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
+
+{-# OPTIONS_GHC -fno-warn-name-shadowing #-} -- TODO: clean up name shadowing
+
+{-# OPTIONS_GHC -fno-warn-unused-matches #-} -- @NOCOMMIT
+
 module Pontarius.E2E.SMP where
 
 import           Control.Monad.Except

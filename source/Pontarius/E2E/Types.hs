@@ -4,7 +4,6 @@
 module Pontarius.E2E.Types
 where
 
-import           Control.Concurrent
 import           Control.Concurrent.STM
 import qualified Control.Monad.CryptoRandom as CR
 import           Control.Monad.Free
@@ -74,6 +73,10 @@ data SmpState = SmpDone
               | SmpInProgress (SmpMessaging (Either E2EError Bool))
               | SmpGotChallenge (Text -> (SmpMessaging (Either E2EError Bool)))
 
+instance Show SmpState where
+    show SmpDone = "SmpDone"
+    show SmpInProgress{} = "SmpInProgress"
+    show SmpGotChallenge{} = "SmpGotChallenge"
 
 data E2EState = E2EState { authState        :: !AuthState
                          , msgState         :: !MsgState
@@ -96,7 +99,7 @@ data E2EState = E2EState { authState        :: !AuthState
                          , ssid             :: !(Maybe BS.ByteString)
                            -- SMP ------------------------------
                          , smpState         :: !SmpState
-                         }
+                         } deriving Show
 
 data MessagePayload = MP { messagePlaintext :: !BS.ByteString
 --                         , tlvs :: ![TLV]
@@ -263,7 +266,7 @@ data Run g = Wait (E2EMessage -> Messaging (RunState g))
 
 data E2ESession g =
     E2ESession { sE2eGlobals :: E2EGlobals
-               , sE2eState :: MVar (Run g)
+               , sE2eState :: TMVar (Run g)
                , sSign :: BS.ByteString -> IO BS.ByteString
                , sVerify :: PubKey
                             -> BS.ByteString
@@ -275,3 +278,7 @@ data E2ESession g =
                , sOnSmpAuthChange :: Bool -> IO ()
                , sPeer :: Xmpp.Jid
                }
+
+data AKEError = AKESendError Xmpp.IQSendError
+              | AKEIQError Xmpp.IQError
+              | AKEError E2EError

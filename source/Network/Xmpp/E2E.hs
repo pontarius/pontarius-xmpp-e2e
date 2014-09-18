@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE PatternGuards #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -17,17 +18,18 @@ module Network.Xmpp.E2E ( e2eInit
                         , E2EGlobals(..)
                         , E2ECallbacks(..)
                         , E2EContext
+                        , AKEError(..)
                         , e2eDefaultParameters
                         , startSmp
                         , answerChallenge
                         ) where
 
+import           Control.Applicative
 import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Exception as Ex
 import           Control.Monad
 import           Control.Monad.Except
-import           Control.Monad.Trans
 import           Control.Monad.Trans.Either
 import           Control.Monad.Trans.Maybe
 import qualified Crypto.Random as CRandom
@@ -35,7 +37,6 @@ import qualified Data.ByteString as BS
 import           Data.List (find)
 import qualified Data.Map as Map
 import           Data.Text (Text)
-import qualified Data.Text as Text
 import           Data.Typeable
 import           Data.XML.Pickle
 import           Data.XML.Types
@@ -145,13 +146,13 @@ handleE2E policy sess out sta _ = do
                          (Xmpp.MessageS m)
                              | [el] <- messagePayload m
                              , nameNamespace (elementName el) == Just smpNs
-                               -> do forkIO . void $ handleSMP m f el
+                               -> do _ <- forkIO . void $ handleSMP f el
                                      return []
                          _ -> return [ (set from (Just f) r''
                                      , [Annotation $ E2EA "" ])]
 
     escape = mzero
-    handleSMP iqr f el = case unpickle (xpRoot $ xpUnliftElems xpSmpMessage) el of
+    handleSMP f el = case unpickle (xpRoot $ xpUnliftElems xpSmpMessage) el of
         Left e -> do
             errorM "Pontarius.Xmpp" $ "Could not unpickle SMP message"
                                       ++ ppUnpickleError e
@@ -170,8 +171,8 @@ handleE2E policy sess out sta _ = do
                       errorM "Pontarius.Xmpp" $ "SMP returned error: "++ show e
                       return []
                   Right msgs -> do
-                      forM_ msgs $ \msg -> do
-                          let pl = pickle (xpUnliftElems xpSmpMessage) msg
+                      forM_ msgs $ \msgOut -> do
+                          let pl = pickle (xpUnliftElems xpSmpMessage) msgOut
                               m = message{ messageTo = Just f
                                          , messagePayload = pl
                                          }
@@ -220,7 +221,7 @@ handleE2E policy sess out sta _ = do
                         case res of
                             Left e -> do
                                 errorM "Pontarius.Xmpp.E2E" $
-                                       "Error in DHCommitMessage from "
+                                       "Error in Reveal Signature Message  from "
                                         ++ show f ++ ": " ++ show e
                                 badRequest iqr
                                 return (sess', ())
@@ -230,8 +231,8 @@ handleE2E policy sess out sta _ = do
                                 return (sess', ())
                             Right _ -> do
                                 criticalM "Pontarius.Xmpp.E2E" $
-                                          "Handling of DHCommitMessage didn't"
-                                           ++ "result in exactly one answer"
+                                          "Handling of Reveal SIgnature Message"
+                                          ++ "didn't result in exactly one answer"
                                 return (sess', ())
             m -> do
                 errorM "Pontarius.Xmpp.E2E" $ "Received unexpected " ++ show m
@@ -280,14 +281,14 @@ handleE2E policy sess out sta _ = do
 -- | Start an E2E session with peer. This may block indefinitly (because the
 -- other side may have to ask the user whether to accept the session). So it
 -- can be necessary to run this in another thread or add a timeout.
-startE2E :: MonadIO m =>
+startE2E :: (MonadIO m, Functor m) =>
             Jid
          -> E2EContext
-         -> m Bool
-startE2E t ctx = maybe (return False) return =<< (runMaybeT $ do
+         -> m (Either AKEError ())
+startE2E t ctx = either Left id <$> (runExceptT $ do
     mbSess <- liftIO . atomically . readTVar $ sessRef ctx
     xmppSession <- case mbSess of
-        Nothing -> mzero
+        Nothing -> throwError . AKESendError $ Xmpp.IQSendError Xmpp.XmppNoStream
         Just s -> return s
     s <- liftIO . withTMVar (peers ctx) $ \sess -> do
         case Map.lookup t sess of
@@ -306,55 +307,64 @@ startE2E t ctx = maybe (return False) return =<< (runMaybeT $ do
                     Ex.throw (e :: SomeException)
               ) $ do
         Right [E2EAkeMessage msg1] <- startAke s initiator
-        res <- runMaybeT $ do
+        res <- runExceptT $ do
             Just msg2 <- step s msg1 xmppSession
             Nothing <- step s msg2 xmppSession
             return ()
         case res of
-            Nothing -> do
+            Left e -> do
                 doEndSession t xmppSession
                 withTMVar (peers ctx) $ \s' -> return (Map.delete t s', ())
                 onStateChange (callbacks ctx) t MsgStatePlaintext
-                return False
-            Just _ -> return True
+                return (Left e)
+            Right () -> return $ Right ()
     )
   where
     step :: E2ESession CRandom.SystemRNG
             -> E2EAkeMessage
             -> Xmpp.Session
-            -> MaybeT IO (Maybe E2EAkeMessage)
+            -> ExceptT AKEError IO (Maybe E2EAkeMessage)
     step s msg xmppSession = do
-        Right answer <- liftIO $ Xmpp.sendIQ' Nothing (Just t) Xmpp.Set
+        mbAnswer <- liftIO $ Xmpp.sendIQ' Nothing (Just t) Xmpp.Set
                                      Nothing (pickle (xpRoot akeMessageXml) msg)
                                      [] xmppSession
+        answer <- case mbAnswer of
+             Left e -> do
+                 liftIO . warningM "Pontarius.Xmpp.E2E" $ "Got IQ senderror "
+                                                          ++ show e
+                 throwError $ AKESendError e
+             Right r -> return r
         iqr <- case answer of
             IQResponseResult r -> return r
             IQResponseError e -> do
-                liftIO . errorM "Pontarius.Xmpp.E2E" $ "Got IQ error " ++ show e
-                mzero
+                liftIO . infoM "Pontarius.Xmpp.E2E" $ "Got IQ error " ++ show e
+                throwError $ AKEIQError e
         el <- case iqResultPayload iqr of
             Nothing -> do
                 liftIO . errorM "Pontarius.Xmpp.E2E" $ "Got empty IQ response"
-                mzero
+                throwError $ AKEError
+                    (ProtocolError (DeserializationError "Empty IQ response") "")
             Just p -> return p
         msg' <- case unpickle (xpRoot akeMessageXml) el of
             Left e -> do
                 liftIO . errorM "Pontarius.Xmpp.E2E" $ "Unpickle error: "
                                 ++ ppUnpickleError e
-                mzero
+                throwError $ AKEError
+                    (ProtocolError (DeserializationError "Unpickle error") "")
             Right r -> return r
         res <- liftIO $ takeAkeMessage s msg'
         case res of
             Left e -> do
                 liftIO . errorM "Pontarius.Xmpp.E2E" $ "Got protocol error : "
                                 ++ show e
-                mzero
+                throwError $ AKEError e
             Right [r] -> return $ Just r
             Right [] -> return Nothing
             Right _ -> do
                 liftIO . criticalM "Pontarius.Xmpp.E2E" $
                           "takeAkeMessage resulted in more than one answer"
-                mzero
+                throwError $ AKEError (ProtocolError ValueRange
+                                       "Internal error, see logs")
 
 
 withSMP :: MonadIO m =>
