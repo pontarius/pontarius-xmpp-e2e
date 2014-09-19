@@ -16,6 +16,7 @@ module Pontarius.E2E.Session
        -- )
 
        where
+import qualified Data.Traversable as Traversable
 import qualified Control.Exception as Ex
 import qualified Data.Map as Map
 import           Control.Concurrent.STM
@@ -84,8 +85,8 @@ advanceMessaging s f = do
     go (Free (Verify pk sig pt g)) = do
         v <- liftIO $ sVerify s pk sig pt
         case v of
-            True -> go g
-            False -> liftIO $ do
+            Just info -> mapRun (\st -> st{verifyInfo = Just info}) <$> go g
+            Nothing -> liftIO $ do
                 errorM "Pontarius.Xmpp.E2E" "Verify signature failed"
                 return . Done .Left $ ProtocolError SignatureMismatch ""
     go (Pure a) = return $ Done a
@@ -311,17 +312,45 @@ responder = bob
 data SessionState = AkeRunning
                   | NotAuthenticated
                   | AkeError E2EError
-                  | Authenticated E2EState
+                  | Authenticated { sessionPubkey :: !PubKey
+                                  , sessionVerifyInfo :: !VerifyInfo
+                                  , sessionID :: !BS.ByteString
+                                  }
                     deriving (Show)
+
+
+sessionState :: E2ESession g -> STM SessionState
+sessionState sess = do
+    st <- readTMVar $ sE2eState sess
+    case st of
+        Wait{} -> return AkeRunning
+        Done (Left e) -> return $ AkeError e
+        Done (Right (s, _)) ->
+            case msgState s of
+                MsgStatePlaintext -> return NotAuthenticated
+                MsgStateFinished -> return NotAuthenticated
+                MsgStateEncrypted ->
+                    let pk = case theirPubKey s of
+                            Nothing -> error "sessionState: No pubkey set"
+                            Just pk' -> pk'
+                        sid = case ssid s of
+                            Nothing -> error "sessionState: No ssid set"
+                            Just sid' -> sid'
+                        vInfo = case verifyInfo s of
+                            Nothing -> error "sessionState: No verifyInfo set"
+                            Just vi -> vi
+                    in return $ Authenticated pk vInfo sid
 
 getSessionState :: Xmpp.Jid -> E2EContext -> STM SessionState
 getSessionState peer ctx = do
     ps <- readTMVar $ peers ctx
     case Map.lookup peer ps of
         Nothing -> return NotAuthenticated
-        Just sess -> do
-            st <- readTMVar $ sE2eState sess
-            case st of
-                 Wait{} -> return AkeRunning
-                 Done (Left e) -> return $ AkeError e
-                 Done (Right (s, _)) -> return $ Authenticated s
+        Just sess -> sessionState sess
+
+
+-- | Get session and their status
+getSessions :: E2EContext -> STM (Map.Map Xmpp.Jid SessionState)
+getSessions ctx = do
+    ps <- readTMVar $ peers ctx
+    Traversable.forM ps $ sessionState

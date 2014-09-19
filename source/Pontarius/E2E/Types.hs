@@ -4,6 +4,7 @@
 module Pontarius.E2E.Types
 where
 
+import           Control.Arrow (first)
 import           Control.Concurrent.STM
 import qualified Control.Monad.CryptoRandom as CR
 import           Control.Monad.Free
@@ -78,9 +79,14 @@ instance Show SmpState where
     show SmpInProgress{} = "SmpInProgress"
     show SmpGotChallenge{} = "SmpGotChallenge"
 
+data VerifyInfo = VerifyInfo { keyID :: !BS.ByteString -- Identifier for the key
+                                                       -- seen
+                             } deriving (Show)
+
 data E2EState = E2EState { authState        :: !AuthState
                          , msgState         :: !MsgState
                          , theirPubKey      :: !(Maybe PubKey)
+                         , verifyInfo       :: !(Maybe VerifyInfo)
                          , ourKeyID         :: !Integer -- KeyID of ourCurrentKey
                          , ourCurrentKey    :: !DHKeyPair
                          , ourPreviousKey   :: !DHKeyPair
@@ -250,7 +256,7 @@ data E2ECallbacks = E2EC { onSendMessage :: Xmpp.Jid -> E2EMessage -> IO ()
                                    -> PubKey
                                    -> BS.ByteString
                                    -> BS.ByteString
-                                   -> IO Bool
+                                   -> IO (Maybe VerifyInfo)
                          }
 
 data E2EContext =
@@ -264,6 +270,12 @@ data E2EContext =
 data Run g = Wait (E2EMessage -> Messaging (RunState g))
            | Done (RunState g)
 
+mapRun :: (E2EState -> E2EState) -> Run g -> Run g
+mapRun f (Wait g) = Wait (fmap (fmap (first f)) . g)
+mapRun _ (Done (Left e)) = Done $ Left e
+mapRun f (Done (Right (r, g))) = Done $ Right (f r, g)
+
+
 data E2ESession g =
     E2ESession { sE2eGlobals :: E2EGlobals
                , sE2eState :: TMVar (Run g)
@@ -271,7 +283,7 @@ data E2ESession g =
                , sVerify :: PubKey
                             -> BS.ByteString
                             -> BS.ByteString
-                            -> IO Bool
+                            -> IO (Maybe VerifyInfo)
                , sOnSendMessage :: E2EMessage -> IO ()
                , sOnStateChange :: MsgState -> IO ()
                , sOnSmpChallenge :: Maybe Text -> IO ()

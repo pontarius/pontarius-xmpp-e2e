@@ -117,6 +117,7 @@ newState = do
     return E2EState{ ourPreviousKey   = opk
                    , ourCurrentKey    = ock
                    , theirPubKey      = Nothing
+                   , verifyInfo       = Nothing
                    , ourKeyID         = 1
                    , theirCurrentKey  = Nothing
                    , mostRecentKey    = 2

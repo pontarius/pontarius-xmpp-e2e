@@ -15,6 +15,7 @@ module Network.Xmpp.E2E ( e2eInit
                         , wasEncrypted
 --                        , Network.Xmpp.E2E.getKey
                         , PubKey(..)
+                        , VerifyInfo(..)
                         , E2EGlobals(..)
                         , E2ECallbacks(..)
                         , E2EContext
@@ -24,6 +25,7 @@ module Network.Xmpp.E2E ( e2eInit
                         , answerChallenge
                         , SessionState(..)
                         , getSessionState
+                        , getSessions
                         ) where
 
 import           Control.Applicative
