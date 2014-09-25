@@ -16,7 +16,8 @@ import           Pontarius.E2E.Serialize
 decryptDataMessage :: CRandom.CPRG g => DataMessage -> E2E g BS.ByteString
 decryptDataMessage msg = do
     s <- get
-    unless (msgState s == MsgStateEncrypted) . throwError $ WrongState "decryptDataMessage"
+    unless (isEncrypted $ msgState s) . throwError
+          $ WrongState "decryptDataMessage"
     MK{ recvEncKey
       , recvMacKey } <- makeMessageKeys (senderKeyID msg) (recipientKeyID msg)
     check <- parameter paramCheckMac
@@ -29,6 +30,8 @@ decryptDataMessage msg = do
     shiftTheirKeys (nextDHy msg) (senderKeyID msg)
     return pl
   where
+    isEncrypted (MsgStateEncrypted _) = True
+    isEncrypted _ = False
     shiftKeys = do
         newDH <- makeDHKeyPair
         s <- get
@@ -87,7 +90,7 @@ makeMessageKeys tKeyID oKeyID = do
 encryptDataMessage :: BS.ByteString -> E2E g DataMessage
 encryptDataMessage payload = do
     s <- get
-    unless (msgState s == MsgStateEncrypted) $ throwError (WrongState "encryptDataMessage")
+    unless (isEncrypted $ msgState s) $ throwError (WrongState "encryptDataMessage")
     mk <- makeMessageKeys (theirKeyID s) (ourKeyID s)
     pl <- encCtr (sendEncKey mk) (encodeInteger $ counter s) payload
     let msg = DM { senderKeyID = ourKeyID s
@@ -100,3 +103,6 @@ encryptDataMessage payload = do
     messageMAC <- mac (sendMacKey mk) (encodeMessageBytes msg)
     put s{counter = counter s + 1}
     return $ msg{messageMAC = messageMAC}
+  where
+    isEncrypted (MsgStateEncrypted _) = True
+    isEncrypted _ = False

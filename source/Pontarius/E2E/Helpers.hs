@@ -69,9 +69,10 @@ putAuthState :: MonadState E2EState m => AuthState -> m ()
 putAuthState as = do modify $ \s -> s{authState = as }
 
 putMsgState :: MsgState -> E2E g ()
-putMsgState ms = do
-    stateChange ms
-    modify $ \s -> s{msgState = ms }
+putMsgState newSt = do
+    oldSt <- gets msgState
+    stateChange oldSt newSt
+    modify $ \s -> s{msgState = newSt }
 
 makeDHSharedSecret :: Integer -> Integer -> E2E g Integer
 makeDHSharedSecret private public = do
@@ -117,7 +118,6 @@ newState = do
     return E2EState{ ourPreviousKey   = opk
                    , ourCurrentKey    = ock
                    , theirPubKey      = Nothing
-                   , verifyInfo       = Nothing
                    , ourKeyID         = 1
                    , theirCurrentKey  = Nothing
                    , mostRecentKey    = 2

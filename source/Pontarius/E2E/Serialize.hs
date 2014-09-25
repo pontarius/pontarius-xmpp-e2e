@@ -240,13 +240,11 @@ dataMessageXml = xpUnliftElems .
 e2eMessageSelector :: Num a => E2EMessage -> a
 e2eMessageSelector E2EAkeMessage{} = 0
 e2eMessageSelector E2EDataMessage{} = 1
-e2eMessageSelector E2EEndSessionMessage{} = 2
 
 e2eMessageXml :: PU [Element] E2EMessage
 e2eMessageXml = xpChoice e2eMessageSelector
                 [ xpWrap E2EAkeMessage unE2EAkeMessage akeMessageXml
                 , xpWrap E2EDataMessage unE2EDataMessage dataMessageXml
-                , xpConst E2EEndSessionMessage endSessionMessageXml
                 ]
 
 filterOutJunk :: Monad m => ConduitM Event Event m ()

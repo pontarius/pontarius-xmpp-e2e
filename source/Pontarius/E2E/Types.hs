@@ -24,7 +24,7 @@ data DHKeyPair = DHKeyPair { pub  :: !Integer
                            } deriving Show
 
 data MsgState = MsgStatePlaintext
-              | MsgStateEncrypted
+              | MsgStateEncrypted VerifyInfo
               | MsgStateFinished
               deriving (Eq, Show)
 
@@ -81,12 +81,11 @@ instance Show SmpState where
 
 data VerifyInfo = VerifyInfo { keyID :: !BS.ByteString -- Identifier for the key
                                                        -- seen
-                             } deriving (Show)
+                             } deriving (Eq, Show)
 
 data E2EState = E2EState { authState        :: !AuthState
                          , msgState         :: !MsgState
                          , theirPubKey      :: !(Maybe PubKey)
-                         , verifyInfo       :: !(Maybe VerifyInfo)
                          , ourKeyID         :: !Integer -- KeyID of ourCurrentKey
                          , ourCurrentKey    :: !DHKeyPair
                          , ourPreviousKey   :: !DHKeyPair
@@ -212,19 +211,20 @@ data AuthKeys = KeysRSM -- RevealSignatureMessage
 
 data E2EMessage = E2EAkeMessage {unE2EAkeMessage ::  !E2EAkeMessage}
                 | E2EDataMessage {unE2EDataMessage:: !DataMessage}
-                | E2EEndSessionMessage
                   deriving Show
+
+data EndSessionMessage = EndSessionMessage
 
 data MessagingF a = SendMessage !E2EMessage a
                   | RecvMessage (E2EMessage -> a)
                   | Yield !BS.ByteString a
-                  | StateChange !MsgState a
+                  | StateChange !MsgState !MsgState a
                   | Log !String a
                   | Sign !BS.ByteString (BS.ByteString -> a)
                   | Verify !PubKey        -- | Public key
                            !BS.ByteString -- | Signature
                            !BS.ByteString -- | Plain Text
-                           a
+                           (VerifyInfo -> a)
                   deriving Functor
 
 type Messaging = Free MessagingF
@@ -233,22 +233,25 @@ instance Show a => Show (MessagingF a) where
     show (SendMessage msg f) = "SendMessage{" ++ show msg ++ "}> " ++ show f
     show (RecvMessage _) = "RecvMsg(...)"
     show (Yield y f) = "Yield{" ++ show y ++ "}> " ++ show f
-    show (StateChange st f) = "StateChange{" ++ show st ++ "}> " ++ show f
+    show (StateChange oldSt newST f)
+        = "StateChange{" ++ show oldSt ++ " -> " ++ show newST ++ "}> " ++ show f
     show (Log l f) = "Log{" ++ show l ++ "}> " ++ show f
     show (Sign bs _) = "Sign{" ++ show bs ++ "}(...) "
-    show (Verify pkid plain sig f) = concat $
+    show (Verify pkid plain sig _f) = concat $
                                      [ "Verify{key: ", show pkid
                                      , "plaintext: ", show plain
                                      , "signature: ", show sig
-                                     , "}> ", show f
+                                     , "}> (..)"
                                      ]
 
 
 
 type RunState g = Either E2EError (E2EState, g)
 
-data E2ECallbacks = E2EC { onSendMessage :: Xmpp.Jid -> E2EMessage -> IO ()
-                         , onStateChange :: Xmpp.Jid -> MsgState -> IO ()
+data E2ECallbacks = E2EC { onStateChange :: Xmpp.Jid
+                                         -> MsgState -- old state
+                                         -> MsgState -- new state
+                                         -> IO ()
                          , onSmpChallenge :: Xmpp.Jid -> Maybe Text -> IO ()
                          , onSmpAuthChange :: Xmpp.Jid -> Bool -> IO ()
                          , cSign :: BS.ByteString -> IO BS.ByteString
@@ -284,8 +287,7 @@ data E2ESession g =
                             -> BS.ByteString
                             -> BS.ByteString
                             -> IO (Maybe VerifyInfo)
-               , sOnSendMessage :: E2EMessage -> IO ()
-               , sOnStateChange :: MsgState -> IO ()
+               , sOnStateChange :: MsgState -> MsgState -> IO ()
                , sOnSmpChallenge :: Maybe Text -> IO ()
                , sOnSmpAuthChange :: Bool -> IO ()
                , sPeer :: Xmpp.Jid

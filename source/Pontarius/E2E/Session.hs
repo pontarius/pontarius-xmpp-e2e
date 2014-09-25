@@ -16,6 +16,7 @@ module Pontarius.E2E.Session
        -- )
 
        where
+import           Control.Concurrent hiding (yield)
 import qualified Data.Traversable as Traversable
 import qualified Control.Exception as Ex
 import qualified Data.Map as Map
@@ -55,7 +56,6 @@ newSession globals cb peer = do
     s <- newTMVarIO $ Done $ Right (st, g')
     return E2ESession{ sE2eGlobals      = globals
                      , sE2eState        = s
-                     , sOnSendMessage   = onSendMessage   cb peer
                      , sOnStateChange   = onStateChange   cb peer
                      , sOnSmpAuthChange = onSmpAuthChange cb peer
                      , sOnSmpChallenge  = onSmpChallenge  cb peer
@@ -71,21 +71,19 @@ advanceMessaging s f = do
     res <- runWriterT $ go f
     case res of
         (r@(Done Left{}), _) -> return (r, ([], []))
-        (r@(Done Right{}), mys@(_,ms)) -> do
-            forM_ ms $ sOnSendMessage s
-            return (r, mys)
+        (r@(Done Right{}), mys) -> return (r, mys)
         (w@Wait{}, ms) -> return (w, ms)
   where
     go (Free (SendMessage m g)) = tell ([], [m]) >> go g
     go (Free (RecvMessage g)) = return $ Wait g
     go (Free (Yield y g)) = tell ([y], []) >> go g
-    go (Free (StateChange st g)) = liftIO (sOnStateChange s st) >> go g
+    go (Free (StateChange os ns g)) = liftIO (sOnStateChange s os ns) >> go g
     go (Free (Log l g)) = liftIO (infoM "Pontarius.Xmpp.E2E" l) >> go g
     go (Free (Sign pt g)) = liftIO (sSign s pt) >>= go . g
     go (Free (Verify pk sig pt g)) = do
         v <- liftIO $ sVerify s pk sig pt
         case v of
-            Just info -> mapRun (\st -> st{verifyInfo = Just info}) <$> go g
+            Just info -> go $ g info
             Nothing -> liftIO $ do
                 errorM "Pontarius.Xmpp.E2E" "Verify signature failed"
                 return . Done .Left $ ProtocolError SignatureMismatch ""
@@ -227,19 +225,22 @@ initSMP mbQuestion secret sess = startSMP sess $ \g -> runRand g $ do
     exps <- mkExponents
     return $ smp1 mbQuestion secret exps
 
-endSession :: E2ESession CRandom.SystemRNG -> IO ()
-endSession session = modifyTMVar_ (sE2eState session) $ \se -> do
+resetSession :: E2ESession CRandom.SystemRNG -> IO ()
+resetSession session = modifyTMVar_ (sE2eState session) $ \se -> do
     p <- case se of
-        Wait _ -> do
-            sOnSendMessage session E2EEndSessionMessage
-            return True
-        Done (Right (s,_g)) -> return (msgState s /= MsgStatePlaintext)
         Done (Left{}) -> return True
+        Done (Right (s,_g))
+            | msgState s /= MsgStatePlaintext
+              -> do _ <- forkIO $ sOnStateChange session (msgState s)
+                                                         MsgStatePlaintext
+                    return True
+        _ -> return False
     if p then do
         g <- CRandom.cprgCreate <$> CRandom.createEntropyPool
                                         :: IO CRandom.SystemRNG
         let s' = runIdentity $ runRandT g $ runReaderT newState
                                                        (sE2eGlobals session)
+
         return . Done $ Right s'
         else return se
   where
@@ -249,7 +250,7 @@ startAke :: E2ESession CRandom.SystemRNG
          -> E2E CRandom.SystemRNG ()
          -> IO (Either E2EError [E2EMessage])
 startAke session side = do
-    endSession session
+    resetSession session
     fmap snd <$>withSession session side
 
 sendDataMessage :: BS.ByteString
@@ -318,6 +319,23 @@ data SessionState = AkeRunning
                                   }
                     deriving (Show)
 
+sessionEnded :: Xmpp.Jid -> E2EContext -> IO ()
+sessionEnded j ctx = do
+    wasAuthenticated <- atomically $ do
+        ps <- takeTMVar $ peers ctx
+        case Map.updateLookupWithKey (\ _ _ -> Nothing) j ps of
+            (Nothing, _ ) -> putTMVar (peers ctx) ps >> return Nothing
+            (Just sess, ps') -> do
+                putTMVar (peers ctx) ps'
+                st <- sessionState sess
+                case st of
+                    Authenticated{sessionVerifyInfo = vi} -> return $ Just vi
+                    _ -> return Nothing
+    case wasAuthenticated of
+        Nothing -> return ()
+        Just vi -> (onStateChange $ callbacks ctx) j (MsgStateEncrypted vi)
+                                                     MsgStateFinished
+
 
 sessionState :: E2ESession g -> STM SessionState
 sessionState sess = do
@@ -329,16 +347,13 @@ sessionState sess = do
             case msgState s of
                 MsgStatePlaintext -> return NotAuthenticated
                 MsgStateFinished -> return NotAuthenticated
-                MsgStateEncrypted ->
+                MsgStateEncrypted vInfo ->
                     let pk = case theirPubKey s of
                             Nothing -> error "sessionState: No pubkey set"
                             Just pk' -> pk'
                         sid = case ssid s of
                             Nothing -> error "sessionState: No ssid set"
                             Just sid' -> sid'
-                        vInfo = case verifyInfo s of
-                            Nothing -> error "sessionState: No verifyInfo set"
-                            Just vi -> vi
                     in return $ Authenticated pk vInfo sid
 
 getSessionState :: Xmpp.Jid -> E2EContext -> STM SessionState

@@ -20,6 +20,7 @@ module Network.Xmpp.E2E ( e2eInit
                         , E2ECallbacks(..)
                         , E2EContext
                         , AKEError(..)
+                        , MsgState(..)
                         , e2eDefaultParameters
                         , startSmp
                         , answerChallenge
@@ -32,6 +33,7 @@ import           Control.Applicative
 import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Exception as Ex
+import           Control.Lens hiding (from, to)
 import           Control.Monad
 import           Control.Monad.Except
 import           Control.Monad.Trans.Either
@@ -46,7 +48,6 @@ import           Data.XML.Pickle
 import           Data.XML.Types
 import           Network.Xmpp as Xmpp
 import qualified Network.Xmpp.Internal as Xmpp
-import           Network.Xmpp.Lens
 import           Pontarius.E2E.Serialize
 import           Pontarius.E2E.Session
 import           Pontarius.E2E.Types
@@ -76,6 +77,28 @@ handleE2E :: (Jid -> IO (Maybe Bool))
           -> IO [(Xmpp.Stanza, [Annotation])]
 handleE2E policy sess out sta _ = do
     case sta of
+        Xmpp.PresenceS pres | presenceType pres == Unavailable
+                            , Just f <- presenceFrom pres
+                              -> do
+                                  sessionEnded f sess
+                                  return []
+        Xmpp.MessageErrorS me
+            | Just f <- me ^. from
+            , [mpl] <- me ^.. payloadT
+              -> case unpickle (xpRoot . xpClean . xpOption
+                                  $ endSessionMessageXml) mpl of
+                     Left e -> do
+
+                                      errorM "Pontarius.Xmpp.E2E" $
+                                             "UnpickleError: "
+                                             ++ ppUnpickleError e
+                                             ++ "\n in \n" ++ show mpl
+                                      return []
+                     Right Nothing -> return [(sta, [])]
+                                                   -- Fork to avoid blocking
+                     Right (Just ()) -> sessionEnded f sess
+                                       >> return []
+
         Xmpp.IQRequestS iqr -> case unpickle (xpRoot . xpClean . xpOption
                                               $ akeMessageXml)
                                               $ Xmpp.iqRequestPayload iqr of
@@ -119,10 +142,6 @@ handleE2E policy sess out sta _ = do
                             E2EDataMessage dm -> do
                                 res <- processDataMessage from' s dm
                                 return (sess', res)
-                            E2EEndSessionMessage -> do
-                                infoM "Pontarius.Xmpp.E2E" $ "E2E session with "
-                                      ++ show from' ++ " has ended."
-                                return (Map.delete from' sess', [])
                             E2EAkeMessage _ -> do
                                 errorM "Pontarius.Xmpp.E2E"
                                        "Got AKE message in message stanza"
@@ -298,7 +317,6 @@ startE2E t ctx = either Left id <$> (runExceptT $ do
         case Map.lookup t sess of
             --Xmpp.sendIQ
             Nothing -> return ()
-
             Just _s -> doEndSession t xmppSession
         s <- newSession (globals ctx) (callbacks ctx) t
         let sess' = Map.insert t s sess
@@ -307,7 +325,6 @@ startE2E t ctx = either Left id <$> (runExceptT $ do
                     doEndSession t xmppSession
                     withTMVar (peers ctx) $
                         \s' -> return (Map.delete t s', ())
-                    onStateChange (callbacks ctx) t MsgStatePlaintext
                     Ex.throw (e :: SomeException)
               ) $ do
         Right [E2EAkeMessage msg1] <- startAke s initiator
@@ -319,7 +336,6 @@ startE2E t ctx = either Left id <$> (runExceptT $ do
             Left e -> do
                 doEndSession t xmppSession
                 withTMVar (peers ctx) $ \s' -> return (Map.delete t s', ())
-                onStateChange (callbacks ctx) t MsgStatePlaintext
                 return (Left e)
             Right () -> return $ Right ()
     )
@@ -414,6 +430,7 @@ answerChallenge :: MonadIO m =>
                 -> m (Either E2EError ())
 answerChallenge peer secret ctx = withSMP peer ctx $ \s ->
     respondChallenge s secret
+
 
 doEndSession :: Jid -> Session -> IO ()
 doEndSession t xmppSession = do

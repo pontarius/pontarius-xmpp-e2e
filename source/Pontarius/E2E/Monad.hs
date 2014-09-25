@@ -130,9 +130,9 @@ sendMessage msg = liftMessaging $ SendMessage msg (return ())
 sign :: BS.ByteString -> E2E g BS.ByteString
 sign bs = liftMessaging $ Sign bs return
 
-verify :: PubKey -> BS.ByteString -> BS.ByteString -> E2E g ()
+verify :: PubKey -> BS.ByteString -> BS.ByteString -> E2E g VerifyInfo
 verify pkID signature plaintext =
-    liftMessaging $ Verify pkID signature plaintext (return ())
+    liftMessaging $ Verify pkID signature plaintext return
 
-stateChange :: MsgState -> E2E g ()
-stateChange s = liftMessaging $ StateChange s (return ())
+stateChange :: MsgState -> MsgState -> E2E g ()
+stateChange os ns = liftMessaging $ StateChange os ns (return ())
