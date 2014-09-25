@@ -252,7 +252,11 @@ data E2ECallbacks = E2EC { onStateChange :: Xmpp.Jid
                                          -> MsgState -- old state
                                          -> MsgState -- new state
                                          -> IO ()
-                         , onSmpChallenge :: Xmpp.Jid -> Maybe Text -> IO ()
+                         , onSmpChallenge :: Xmpp.Jid
+                                          -> BS.ByteString
+                                          -> VerifyInfo
+                                          -> Maybe Text
+                                          -> IO ()
                          , onSmpAuthChange :: Xmpp.Jid -> Bool -> IO ()
                          , cSign :: BS.ByteString -> IO BS.ByteString
                          , cVerify :: Xmpp.Jid
@@ -288,7 +292,10 @@ data E2ESession g =
                             -> BS.ByteString
                             -> IO (Maybe VerifyInfo)
                , sOnStateChange :: MsgState -> MsgState -> IO ()
-               , sOnSmpChallenge :: Maybe Text -> IO ()
+               , sOnSmpChallenge :: BS.ByteString
+                                 -> VerifyInfo
+                                 -> Maybe Text
+                                 -> IO ()
                , sOnSmpAuthChange :: Bool -> IO ()
                , sPeer :: Xmpp.Jid
                }

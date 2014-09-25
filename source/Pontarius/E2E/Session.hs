@@ -168,12 +168,16 @@ takeSMPMessage :: CRandom.CPRG g =>
                -> SmpMessage
                -> IO (Either E2EError [SmpMessage])
 takeSMPMessage sess msg@SmpMessage1{question = question} = do
-    sOnSmpChallenge sess question
+    sessState <- atomically $ sessionState sess
     withSessionState sess $ \s g -> do
+        case sessState of
+            Authenticated { sessionVerifyInfo = vInfo
+                          , sessionID = sid} -> do
+                sOnSmpChallenge sess sid vInfo question
+            _ -> return ()
         let (exps, g') = runRand g mkExponents
             st = SmpGotChallenge $
                  \secret -> execSMP (sE2eGlobals sess) s $ smp2 secret exps msg
-
         return ((st, g'), Right [])
 takeSMPMessage sess msg = withSessionState sess $ \s g ->
     case (smpState s) of
