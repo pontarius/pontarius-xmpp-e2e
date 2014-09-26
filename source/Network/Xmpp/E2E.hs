@@ -392,9 +392,9 @@ withSMP :: MonadIO m =>
         -> E2EContext
         -> (  E2ESession CRandom.SystemRNG
            -> IO (Either E2EError [SmpMessage]))
-        -> m (Either E2EError ())
+        -> m (Either E2EError (BS.ByteString, VerifyInfo))
 withSMP peer ctx f = runExceptT $ do
-    mbCon <- liftIO . atomically $ readTVar (sessRef ctx)
+    mbCon <- liftIO $ readTVarIO (sessRef ctx)
     con <- case mbCon of
         Nothing -> throwError $ WrongState "No XMPP connection"
         Just c -> return c
@@ -402,24 +402,30 @@ withSMP peer ctx f = runExceptT $ do
     p <- case Map.lookup peer ps of
         Nothing -> throwError $ WrongState "No session established"
         Just p' -> return p'
-    res <- liftIO $ f p
-    msgs <- case res of
-        Left e -> throwError e
-        Right msgs' -> return msgs'
-    forM_ msgs $ \msg -> do
-        let pl = pickle (xpUnliftElems xpSmpMessage) msg
-            m = message{ messageTo = Just peer
-                       , messagePayload = pl
-                       }
-        liftIO $ Xmpp.sendMessage m con
-
+    sState <- liftIO . atomically $ sessionState p
+    case sState of
+        Authenticated { sessionVerifyInfo = vinfo
+                      , sessionID = sessid}
+            -> do
+            res <- liftIO $ f p
+            msgs <- case res of
+                Left e -> throwError e
+                Right msgs' -> return msgs'
+            forM_ msgs $ \msg -> do
+                let pl = pickle (xpUnliftElems xpSmpMessage) msg
+                    m = message{ messageTo = Just peer
+                               , messagePayload = pl
+                               }
+                liftIO $ Xmpp.sendMessage m con
+            return (sessid, vinfo)
+        _ -> throwError $ WrongState "No session established"
 
 startSmp :: MonadIO m =>
             Jid
          -> Maybe Text
          -> Text
          -> E2EContext
-         -> m (Either E2EError ())
+         -> m (Either E2EError (BS.ByteString, VerifyInfo))
 startSmp peer mbQuestion secret ctx =
     withSMP peer ctx $ initSMP mbQuestion secret
 
@@ -428,7 +434,8 @@ answerChallenge :: MonadIO m =>
                 -> Text
                 -> E2EContext
                 -> m (Either E2EError ())
-answerChallenge peer secret ctx = withSMP peer ctx $ \s ->
+answerChallenge peer secret ctx =
+    liftM (fmap $ const ()) . withSMP peer ctx $ \s ->
     respondChallenge s secret
 
 
