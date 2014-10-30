@@ -30,7 +30,7 @@ decryptDataMessage msg = do
     shiftTheirKeys (nextDHy msg) (senderKeyID msg)
     return pl
   where
-    isEncrypted (MsgStateEncrypted _) = True
+    isEncrypted MsgStateEncrypted{} = True
     isEncrypted _ = False
     shiftKeys = do
         newDH <- makeDHKeyPair
@@ -104,5 +104,5 @@ encryptDataMessage payload = do
     put s{counter = counter s + 1}
     return $ msg{messageMAC = messageMAC}
   where
-    isEncrypted (MsgStateEncrypted _) = True
+    isEncrypted MsgStateEncrypted{} = True
     isEncrypted _ = False

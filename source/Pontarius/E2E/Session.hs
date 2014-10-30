@@ -333,12 +333,16 @@ sessionEnded j ctx = do
                 putTMVar (peers ctx) ps'
                 st <- sessionState sess
                 case st of
-                    Authenticated{sessionVerifyInfo = vi} -> return $ Just vi
+                    Authenticated{ sessionVerifyInfo = vi
+                                 , sessionID = sid
+                                 } ->
+                        return $ Just (vi, sid)
                     _ -> return Nothing
     case wasAuthenticated of
         Nothing -> return ()
-        Just vi -> (onStateChange $ callbacks ctx) j (MsgStateEncrypted vi)
-                                                     MsgStateFinished
+        Just (vi, sid) ->
+            (onStateChange $ callbacks ctx) j (MsgStateEncrypted vi sid)
+                                              MsgStateFinished
 
 
 sessionState :: E2ESession g -> STM SessionState
@@ -351,13 +355,10 @@ sessionState sess = do
             case msgState s of
                 MsgStatePlaintext -> return NotAuthenticated
                 MsgStateFinished -> return NotAuthenticated
-                MsgStateEncrypted vInfo ->
+                MsgStateEncrypted vInfo sid ->
                     let pk = case theirPubKey s of
                             Nothing -> error "sessionState: No pubkey set"
                             Just pk' -> pk'
-                        sid = case ssid s of
-                            Nothing -> error "sessionState: No ssid set"
-                            Just sid' -> sid'
                     in return $ Authenticated pk vInfo sid
 
 getSessionState :: Xmpp.Jid -> E2EContext -> STM SessionState

@@ -66,10 +66,10 @@ bob2 (RSM r sm) = do
     protocolGuard HashMismatch "bob2 hash" (gxBSHash' =~= gxBSHash)
     let gx = rollInteger . BS.unpack $ gxBS
     checkAndSaveDHKey gx
-    vInfo <- checkAndSaveAuthMessage KeysRSM sm
+    (vInfo, ssid) <- checkAndSaveAuthMessage KeysRSM sm
     am <- mkAuthMessage KeysSM
     putAuthState AuthStateNone
-    putMsgState $ MsgStateEncrypted vInfo
+    putMsgState $ MsgStateEncrypted vInfo ssid
     return am
 
 alice3 :: SignatureMessage -> E2E g ()
@@ -78,9 +78,9 @@ alice3 (SM xaEncrypted xaSha256Mac) = do
     case aState of
         AuthStateAwaitingSig -> return ()
         _ -> throwError $ WrongState "alice3"
-    vInfo <- checkAndSaveAuthMessage KeysSM (SM xaEncrypted xaSha256Mac)
+    (vInfo, ssid) <- checkAndSaveAuthMessage KeysSM (SM xaEncrypted xaSha256Mac)
     putAuthState AuthStateNone
-    putMsgState $ MsgStateEncrypted vInfo
+    putMsgState $ MsgStateEncrypted vInfo ssid
     return ()
 
 --------------------------------
@@ -142,7 +142,9 @@ mkAuthMessage keyType = do
     (xbEncrypted, xbEncMac) <- xs ourPub keyID sig aesKey macKey2
     return $ SM xbEncrypted xbEncMac
 
-checkAndSaveAuthMessage :: AuthKeys -> SignatureMessage -> E2E g VerifyInfo
+checkAndSaveAuthMessage :: AuthKeys
+                        -> SignatureMessage
+                        -> E2E g (VerifyInfo, SSID)
 checkAndSaveAuthMessage keyType (SM xEncrypted xEncMac) = do
     DHKeyPair gx x <- gets ourCurrentKey
     Just gy <- gets theirCurrentKey
@@ -164,7 +166,7 @@ checkAndSaveAuthMessage keyType (SM xEncrypted xEncMac) = do
                       , theirPubKey = Just theirPID
                       , ssid = Just kdSsid
                       }
-    return vi
+    return (vi, kdSsid)
 
 m :: MonadReader E2EGlobals m
      => Integer

@@ -18,13 +18,14 @@ import qualified Network.Xmpp as Xmpp
 type CTR = BS.ByteString
 type MAC = BS.ByteString
 type DATA = BS.ByteString
+type SSID = BS.ByteString
 
 data DHKeyPair = DHKeyPair { pub  :: !Integer
                            , priv :: !Integer
                            } deriving Show
 
 data MsgState = MsgStatePlaintext
-              | MsgStateEncrypted VerifyInfo
+              | MsgStateEncrypted VerifyInfo SSID
               | MsgStateFinished
               deriving (Eq, Show)
 
