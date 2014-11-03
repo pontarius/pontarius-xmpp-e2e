@@ -116,19 +116,19 @@ smp1 mbQuestion x' (a2, a3, r2, r3, r4, r5, r6, r7) = do
     rangeGuard "alice g3b" g3b'
     rangeGuard "alice pb"  pb'
     rangeGuard "alice qb"  qb'
-    let g3 = g3b' ^. a3
+    let g2 = g2b' ^. a2
+        g3 = g3b' ^. a3
     hashGuard "alice c2" c2'   3 (2 ^. d2' *. g2b' ^. c2') Nothing
     hashGuard "alice c3" c3'   4 (2 ^. d3' *. g3b' ^. c3') Nothing
     -- TODO: fix and reinstate
-    -- hashGuard "alice cp" cp'   5 (g3 ^. d5' *. pb' ^. cp')
-    --                              (Just $ 2 ^. d5' *. d2' ^. d6' *. qb' ^. cp')
+    hashGuard "alice cp" cp'   5 (g3 ^. d5' *. pb' ^. cp')
+                                 (Just $ 2 ^. d5' *. g2 ^. d6' *. qb' ^. cp')
     -- [r4, r5, r6, r7] <- replicateM 4 mkSmpExponent
-    let g2 = g2b' ^. a2
-        pa = g3 ^. r4
+    let pa = g3 ^. r4
         qa = 2 ^. r4 *. g2 ^. x
         cp = smpHash 6 (g3 ^. r5) $ Just (2 ^. r5 *. g2 ^. r6)
-        d5 = (r5 - r4 * cp') `mod` q
-        d6 = (r6 - x  * cp') `mod` q
+        d5 = (r5 - r4 * cp) `mod` q
+        d6 = (r6 - x  * cp) `mod` q
         ra = (qa /. qb') ^. a3
         cr = smpHash 7 (2 ^. r7) (Just $ (qa /. qb') ^. r7)
         d7 = (r7 - a3 * cr) `mod` q
@@ -137,8 +137,8 @@ smp1 mbQuestion x' (a2, a3, r2, r3, r4, r5, r6, r7) = do
     SmpMessage4 rb' cr' d7' <- recvSmpMessage 4
     rangeGuard "alice rb" rb'
     -- TODO: fix and reinstate
-    -- hashGuard "alice cr" cr'   8 (2 ^. d7' *. g3b' ^. cr')
-    --                              (Just $ (qa /. qb') ^. d7 *. rb' ^. cr')
+    hashGuard "alice cr" cr'   8 (2 ^. d7' *. g3b' ^. cr')
+                                 (Just $ (qa /. qb') ^. d7' *. rb' ^. cr')
     return $! (pa /. pb') == rb' ^. a3
 
 smp2 :: Text
@@ -190,12 +190,10 @@ smp2 y' (b2, b3, r2, r3, r4, r5, r6, r7) msg1 = do
     rangeGuard "bob pa'" pa'
     rangeGuard "bob qa'" qa'
     rangeGuard "bob ra'" ra'
-    -- TODO: fix and reinstate
-    -- hashGuard "bob cp" cp' 6 (g3 ^. d5' *. pa' ^. cp')
-    --     (Just $  2 ^. d5' *. g2 ^. d6' *. qa' ^. cp')
-    -- TODO: fix and reinstate
-    -- hashGuard "bob cr" cr' 7 (2 ^. d7' *. g3a' ^. cr' )
-    --     (Just $ (qa' /. qb) ^. d7' *. ra' ^. cr' )
+    hashGuard "bob cp" cp' 6 (g3 ^. d5' *. pa' ^. cp')
+        (Just $  2 ^. d5' *. g2 ^. d6' *. qa' ^. cp')
+    hashGuard "bob cr" cr' 7 (2 ^. d7' *. g3a' ^. cr' )
+        (Just $ (qa' /. qb) ^. d7' *. ra' ^. cr' )
 --    r7 <- mkSmpExponent
     let rb = (qa' /. qb) ^. b3
         cr = smpHash 8 (2 ^. r7) (Just $ (qa' /. qb) ^. r7)
