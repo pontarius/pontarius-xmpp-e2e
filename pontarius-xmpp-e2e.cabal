@@ -58,7 +58,7 @@ library
 --                     , cryptocipher
 -- helpers; remove before release
                      , pem
-                     , certificate
+                     , x509
                      , text
                      , crypto-pubkey-types
                      , asn1-types
