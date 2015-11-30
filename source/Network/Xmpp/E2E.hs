@@ -71,11 +71,12 @@ data E2EAnnotation = E2EA { ssidA :: BS.ByteString -- ^ Session ID of the
 
 handleE2E :: (Jid -> IO (Maybe Bool))
           -> E2EContext
-          -> (Xmpp.Stanza -> IO a)
-          -> Xmpp.Stanza
+          -> (Xmpp.XmppElement -> IO a)
+          -> Xmpp.XmppElement
           -> [Annotation]
-          -> IO [(Xmpp.Stanza, [Annotation])]
-handleE2E policy sess out sta _ = do
+          -> IO [(Xmpp.XmppElement, [Annotation])]
+handleE2E _ _ _ s@Xmpp.XmppNonza{} _ = return [(s,[])]
+handleE2E policy sess elOut s@(Xmpp.XmppStanza sta) _ = do
     case sta of
         Xmpp.PresenceS pres | presenceType pres == Unavailable
                             , Just f <- presenceFrom pres
@@ -94,7 +95,7 @@ handleE2E policy sess out sta _ = do
                                              ++ ppUnpickleError e
                                              ++ "\n in \n" ++ show mpl
                                       return []
-                     Right Nothing -> return [(sta, [])]
+                     Right Nothing -> return [(s, [])]
                                                    -- Fork to avoid blocking
                      Right (Just ()) -> sessionEnded f sess
                                        >> return []
@@ -108,7 +109,7 @@ handleE2E policy sess out sta _ = do
                                               ++ ppUnpickleError e
                                               ++ "\n in \n" ++ show iqr
                                        return []
-                                   Right Nothing -> return [(sta, [])]
+                                   Right Nothing -> return [(s, [])]
                                                     -- Fork to avoid blocking
                                    Right (Just m) -> forkIO (handleAKE iqr m)
                                                      >> return []
@@ -122,7 +123,7 @@ handleE2E policy sess out sta _ = do
                                 ++ " produced error"
                                 ++ ppUnpickleError e
                             left []
-                        Right Nothing -> left [(sta, [])]
+                        Right Nothing -> left [(s, [])]
                         Right (Just msg') | Just from' <- Xmpp.messageFrom msg
                                             -> return (msg', from')
                                           | otherwise -> do
@@ -147,7 +148,7 @@ handleE2E policy sess out sta _ = do
                                        "Got AKE message in message stanza"
                                 return (sess', [])
 
-        _ -> return [(sta, [])]
+        _ -> return [(s, [])]
   where
     processDataMessage f s dm = do
         res <- takeDataMessage s dm
@@ -171,7 +172,7 @@ handleE2E policy sess out sta _ = do
                              , nameNamespace (elementName el) == Just smpNs
                                -> do _ <- forkIO . void $ handleSMP f el
                                      return []
-                         _ -> return [ (set from (Just f) r''
+                         _ -> return [ (Xmpp.XmppStanza $ set from (Just f) r''
                                      , [Annotation $ E2EA "" ])]
 
     escape = mzero
@@ -200,7 +201,7 @@ handleE2E policy sess out sta _ = do
                                          , messagePayload = pl
                                          }
 
-                          ctxSendE2EMsg s (Xmpp.MessageS m)  out
+                          ctxSendE2EMsg s (Xmpp.MessageS m) out
                       return []
 
     handleAKE iqr msg = void . runMaybeT $ do
@@ -300,6 +301,7 @@ handleE2E policy sess out sta _ = do
     errC  = Xmpp.StanzaError Xmpp.Cancel Xmpp.Conflict Nothing Nothing
     result (Xmpp.IQRequest iqid f _to l _tp _bd _atttrs) e = void . out
                 . Xmpp.IQResultS $ Xmpp.IQResult iqid Nothing f l e []
+    out = elOut . Xmpp.XmppStanza
 
 -- | Start an E2E session with peer. This may block indefinitly (because the
 -- other side may have to ask the user whether to accept the session). So it
@@ -471,10 +473,10 @@ ctxSendE2EMsg p sta out = do
 
 sendE2EMsg :: MonadIO m =>
               E2EContext
-           -> (Xmpp.Stanza -> IO (Either XmppFailure ()))
+           -> (Xmpp.XmppElement -> IO (Either XmppFailure ()))
            -> Xmpp.Stanza
            -> m (Either XmppFailure ())
-sendE2EMsg ctx out sta = maybe (return $ Right ()) return =<< ( runMaybeT $ do
+sendE2EMsg ctx outEl sta = maybe (return $ Right ()) return =<< ( runMaybeT $ do
     to' <- case view to sta of
         Nothing -> liftIO (out sta) >> mzero
         Just t -> return t
@@ -511,6 +513,7 @@ sendE2EMsg ctx out sta = maybe (return $ Right ()) return =<< ( runMaybeT $ do
                     return $ Left Xmpp.XmppOtherFailure
     )
   where
+    out = outEl . Xmpp.XmppStanza
     isE2E e = ((== Just e2eNs) . nameNamespace  . elementName) e
 
 getSsid :: Annotated a -> Maybe BS.ByteString
@@ -533,7 +536,10 @@ e2eInit gs policy cb = do
                          }
     let plugin out = do
             return Xmpp.Plugin' { Xmpp.inHandler = handleE2E policy sess out
-                                , Xmpp.outHandler = sendE2EMsg sess out
+                                , Xmpp.outHandler = \s ->
+                                    case s of
+                                      Xmpp.XmppNonza{} -> out s
+                                      Xmpp.XmppStanza st -> sendE2EMsg sess out st
                                 , Xmpp.onSessionUp = \s ->
                                 atomically $ writeTVar sRef $ Just s
                                 }
